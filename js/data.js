@@ -176,6 +176,7 @@ class DemoBackend {
 class CloudBackend {
   mode = 'cloud';
   async init() {
+    if (!/^https:\/\/[a-z0-9-]+\.supabase\.(co|in)\/?$/.test(SUPABASE_URL)) throw new Error('js/config.js 入面嘅 SUPABASE_URL 唔啱，應該係 https://xxxx.supabase.co（Supabase 嘅 Project URL），唔係 GitHub 網址');
     this.sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { flowType: 'pkce', detectSessionInUrl: true, persistSession: true } });
     await this.sb.auth.getSession();
     if (location.search.includes('code=')) history.replaceState(null, '', location.pathname + location.hash);
