@@ -1,7 +1,7 @@
 // 老師管理頁
-import { db } from './data.js';
-import { THEMES, themeColors, stickerUrl, GRADES, gradeLabel } from './constants.js';
-import { $, $$, esc, toast, confirmBox, show, personLabel } from './ui.js';
+import { db } from './data.js?v=20261113a';
+import { THEMES, themeColors, stickerUrl, GRADES, gradeLabel } from './constants.js?v=20261113a';
+import { $, $$, esc, toast, confirmBox, show, personLabel } from './ui.js?v=20261113a';
 
 const A = { tab: 'galleries', view: 'list', gallery: null, hallId: null, roster: [], teacher: null };
 let root;
@@ -239,7 +239,7 @@ async function renderArts(body) {
       $('.thumb', c).style.backgroundImage = `url("${URL.createObjectURL(imgs[0])}")`;
       $('.strip', c).innerHTML = imgs.map((f) => `<img src="${URL.createObjectURL(f)}" alt="">`).join('');
     } else {
-      const { snapshotGLBFile } = await import('./modal-viewer.js');
+      const { snapshotGLBFile } = await import('./modal-viewer.js?v=20261113a');
       for (const f of files) {
         if (!/\.glb$/i.test(f.name)) { toast(`「${f.name}」唔係 .glb 檔`); continue; }
         if (f.size > 48 * 1024 * 1024) { toast(`「${f.name}」太大（${(f.size / 1048576).toFixed(0)}MB），請匯出細啲嘅版本`); continue; }
