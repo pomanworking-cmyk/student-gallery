@@ -1,6 +1,6 @@
 // 資料層：有 Supabase 設定就用雲端，冇就用試用模式（只存喺呢部機）
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=20261113b';
-import { drawSampleArt } from './sample-art.js?v=20261113b';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=20261113c';
+import { drawSampleArt } from './sample-art.js?v=20261113c';
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Math.random().toString(36).slice(2) + Date.now().toString(36));
 const now = () => new Date().toISOString();
@@ -155,6 +155,13 @@ class DemoBackend {
   async getSetting(k) { return this.s.settings?.[k] || ''; }
   async saveSetting(k, v) { (this.s.settings ||= {})[k] = v; this._save(); }
   async resetDemo() { memStore = seed(); this._save(); }
+  async storageUsage() {
+    let total = 0, files = 0;
+    for (const a of this.s.artworks) for (const p of [a.image_path, a.thumb_path, a.model_path, ...(a.photo_paths || [])]) if (p?.startsWith('idb:')) { const b = await idbGet(p.slice(4)); if (b) { total += b.size; files++; } }
+    return { total_bytes: total, my_bytes: total, files };
+  }
+  async backupData() { return { galleries: this.s.galleries, halls: this.s.halls, artworks: this.s.artworks, reactions: this.s.reactions, students: this.s.students }; }
+  async setThumb(a, blob) { const p = await this._store(blob); await this.updateArtwork({ id: a.id, thumb_path: p }); return p; }
   // ---- 媒體 ----
   _cache = new Map();
   async mediaUrl(p) {
@@ -162,13 +169,13 @@ class DemoBackend {
     if (this._cache.has(p)) return this._cache.get(p);
     let url = '';
     if (p.startsWith('gen:')) url = drawSampleArt(Number(p.slice(4)));
-    else if (p.startsWith('genview:')) { const [, s, i] = p.split(':'); const { renderSampleViews } = await import('./sample-model.js?v=20261113b'); const views = renderSampleViews(Number(s)); views.forEach((v, j) => this._cache.set(`genview:${s}:${j}`, v)); url = views[Number(i)]; }
+    else if (p.startsWith('genview:')) { const [, s, i] = p.split(':'); const { renderSampleViews } = await import('./sample-model.js?v=20261113c'); const views = renderSampleViews(Number(s)); views.forEach((v, j) => this._cache.set(`genview:${s}:${j}`, v)); url = views[Number(i)]; }
     else if (p.startsWith('idb:')) { const b = await idbGet(p.slice(4)); url = b ? URL.createObjectURL(b) : drawSampleArt(1); }
     else url = p;
     this._cache.set(p, url); return url;
   }
   async loadModel(p) {
-    if (p.startsWith('genmodel:')) { const { buildSampleModel } = await import('./sample-model.js?v=20261113b'); return { object: buildSampleModel(Number(p.slice(9))) }; }
+    if (p.startsWith('genmodel:')) { const { buildSampleModel } = await import('./sample-model.js?v=20261113c'); return { object: buildSampleModel(Number(p.slice(9))) }; }
     const b = await idbGet(p.slice(4)); if (!b) throw new Error('搵唔到模型檔'); return { buffer: await b.arrayBuffer() };
   }
 }
@@ -258,6 +265,22 @@ class CloudBackend {
   async updateArtwork(a) { const { id, ...rest } = a; this._chk(await this.sb.from('artworks').update(rest).eq('id', id)); }
   async deleteArtwork(a) { await this._removePaths([a]); this._chk(await this.sb.from('artworks').delete().eq('id', a.id)); }
   async listLinks() { return this._chk(await this.sb.from('links').select('*').order('created_at')); }
+  async storageUsage() {
+    const { data, error } = await this.sb.rpc('storage_usage');
+    if (error) { if (/storage_usage|function/i.test(error.message) || error.code === 'PGRST202') throw new Error('NEED_UPDATE_3'); throw error; }
+    return data;
+  }
+  async _all(table, sel = '*') { const out = []; for (let i = 0; ; i += 1000) { const rows = this._chk(await this.sb.from(table).select(sel).range(i, i + 999)); out.push(...rows); if (rows.length < 1000) return out; } }
+  async backupData() {
+    const [galleries, halls, artworks, reactions, students] = await Promise.all(['galleries', 'halls', 'artworks', 'reactions', 'students'].map((t) => this._all(t)));
+    return { galleries, halls, artworks, reactions, students };
+  }
+  async setThumb(a, blob) {
+    const path = await this._upload(blob, a.hall_id, 'jpg', 'image/jpeg');
+    const { error } = await this.sb.from('artworks').update({ thumb_path: path }).eq('id', a.id);
+    if (error) { await this.sb.storage.from('artworks').remove([path]); if (isMissingColumn(error)) throw new Error('資料庫要先更新：請喺 Supabase 嘅 SQL Editor 執行 supabase/update-2.sql'); throw error; }
+    return path;
+  }
   async saveLink(l) {
     if (l.id) { const { id, ...rest } = l; return this._chk(await this.sb.from('links').update(rest).eq('id', id).select().single()); }
     return this._chk(await this.sb.from('links').insert({ ...l, code: newCode(), active: true }).select().single());

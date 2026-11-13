@@ -1,7 +1,7 @@
 // 老師管理頁
-import { db } from './data.js?v=20261113b';
-import { THEMES, themeColors, stickerUrl, GRADES, gradeLabel } from './constants.js?v=20261113b';
-import { $, $$, esc, toast, confirmBox, show, personLabel, hourLabel } from './ui.js?v=20261113b';
+import { db, resizeImage } from './data.js?v=20261113c';
+import { THEMES, themeColors, stickerUrl, GRADES, gradeLabel } from './constants.js?v=20261113c';
+import { $, $$, esc, toast, confirmBox, show, personLabel, hourLabel } from './ui.js?v=20261113c';
 
 const A = { tab: 'galleries', view: 'list', gallery: null, hallId: null, roster: [], teacher: null };
 let root;
@@ -52,6 +52,7 @@ function renderShell() {
       <button class="tab" data-t="links">學生連結</button>
       <button class="tab" data-t="roster">學生名單</button>
       <button class="tab" data-t="reactions">讚賞紀錄</button>
+      <button class="tab" data-t="tools">空間同備份</button>
       ${t.is_owner ? '<button class="tab" data-t="teachers">老師帳戶</button>' : ''}
     </div>
     <div id="adm-body"></div></div>`;
@@ -68,6 +69,7 @@ function renderTab() {
   if (A.tab === 'roster') return renderRoster(body);
   if (A.tab === 'reactions') return renderReactions(body);
   if (A.tab === 'teachers') return renderTeachers(body);
+  if (A.tab === 'tools') return renderTools(body);
   if (A.view === 'edit') return renderEditor(body);
   if (A.view === 'arts') return renderArts(body);
   return renderGalleryList(body);
@@ -253,7 +255,7 @@ async function renderArts(body) {
       $('.thumb', c).style.backgroundImage = `url("${URL.createObjectURL(imgs[0])}")`;
       $('.strip', c).innerHTML = imgs.map((f) => `<img src="${URL.createObjectURL(f)}" alt="">`).join('');
     } else {
-      const { snapshotGLBFile } = await import('./modal-viewer.js?v=20261113b');
+      const { snapshotGLBFile } = await import('./modal-viewer.js?v=20261113c');
       for (const f of files) {
         if (!/\.glb$/i.test(f.name)) { toast(`「${f.name}」唔係 .glb 檔`); continue; }
         if (f.size > 48 * 1024 * 1024) { toast(`「${f.name}」太大（${(f.size / 1048576).toFixed(0)}MB），請匯出細啲嘅版本`); continue; }
@@ -272,6 +274,9 @@ async function renderArts(body) {
     const missing = pending.find((it) => !it.student_name);
     if (missing) { toast('有作品未填姓名'); $('[data-k=student_name]', missing.card).focus(); return; }
     if (pending.some((it) => it.bad)) return toast('有 3D 檔讀唔到，請先移除');
+    const bytes = pending.reduce((t, it) => t + it.files.reduce((u, f) => u + (it.kind === 'model' ? f.size : Math.min(f.size, 600 * 1024)), 0), 0);
+    const warn = await checkSpaceBeforeUpload(bytes);
+    if (warn && !(await confirmBox(warn + ' 仍然上載？', '上載'))) return;
     $('#upload-all').disabled = true;
     let ok = 0; const total = pending.length;
     for (const [i, it] of [...pending].entries()) {
@@ -389,4 +394,99 @@ async function renderTeachers(body) {
     list.appendChild(row);
   });
   $('#dom-save').onclick = async () => { await db.saveSetting('allowed_domain', $('#dom').value.trim().replace(/^@/, '').toLowerCase()); toast('已儲存'); };
+}
+
+// ---------- 空間同備份 ----------
+const FREE_LIMIT = 1024 * 1024 * 1024; // Supabase 免費版：1GB
+const fmtMB = (b) => (b >= 1024 ** 3 ? (b / 1024 ** 3).toFixed(2) + ' GB' : (b / 1024 ** 2).toFixed(b < 10 * 1024 ** 2 ? 1 : 0) + ' MB');
+const STICKER_NAME = { love: '好鍾意', wow: '好厲害', idea: '好有創意', cool: '好有型', giggle: '好得意', touched: '好感動', yum: '好吸引', curious: '點畫㗎？', shy: '好溫馨', peek: '想睇多次' };
+const KIND_NAME = { flat: '平面', photos: '多角度相片', model: '3D 掃描' };
+
+export async function checkSpaceBeforeUpload(bytes) {
+  try { const u = await db.storageUsage(); if (u && u.total_bytes + bytes > FREE_LIMIT * 0.98) return `儲存空間就嚟滿（已用 ${fmtMB(u.total_bytes)}／1 GB），今次上載可能會失敗。可以先喺「空間同備份」睇吓，或者刪除舊畫廊。`; } catch (e) {}
+  return null;
+}
+
+async function renderTools(body) {
+  body.innerHTML = `<div class="panel"><h2>儲存空間</h2><div id="space">載入中…</div></div>
+    <div class="panel"><h2>備份做 Excel</h2>
+      <p class="muted" style="margin-top:-6px;font-size:14px">一次過下載所有畫廊、作品、學生名單同讚賞紀錄。建議每個學期尾做一次，用嚟保存紀錄。（只包括資料同相片連結，唔包括相片檔案本身。）</p>
+      <button class="btn primary" id="bk">⬇️ 下載 Excel 備份</button> <span class="status" id="bk-st"></span></div>
+    <div class="panel"><h2>補做預覽圖</h2>
+      <p class="muted" style="margin-top:-6px;font-size:14px">2026 年 11 月 13 日之前上載嘅平面作品冇細預覽圖，展廳載入會慢啲、用多啲流量。撳下面個掣就會自動補做（每張大約 0.1 MB）。</p>
+      <div id="th">檢查緊…</div></div>
+    <div class="panel"><h2>自動保持運作</h2>
+      <p class="muted" style="margin-top:-6px;font-size:14px">Supabase 免費版連續 7 日冇人用就會暫停。GitHub 已經設定好每日自動連一次資料庫，你唔使做任何嘢。想確認嘅話，可以去 GitHub repo 嘅 <b>Actions</b> 分頁，睇吓「保持 Supabase 運作」有冇綠色 ✓。</p></div>`;
+
+  // 空間
+  (async () => {
+    const el = $('#space');
+    try {
+      const u = await db.storageUsage();
+      if (!u) { el.innerHTML = '<p class="muted">睇唔到（只有已批准嘅老師先睇到）</p>'; return; }
+      const pct = Math.min(100, (u.total_bytes / FREE_LIMIT) * 100);
+      const col = pct > 90 ? 'var(--danger)' : pct > 70 ? '#f08c00' : '#2b8a3e';
+      el.innerHTML = `<div style="display:flex;justify-content:space-between;font-weight:800;font-size:18px"><span>已用 ${fmtMB(u.total_bytes)}</span><span class="muted" style="font-weight:500;font-size:14px">免費上限 1 GB</span></div>
+        <div style="height:14px;background:#f1ece3;border-radius:99px;overflow:hidden;margin:8px 0"><div style="height:100%;width:${Math.max(pct, 1)}%;background:${col}"></div></div>
+        <div class="muted" style="font-size:14px">共 ${u.files} 個檔案${db.mode === 'cloud' && u.my_bytes !== u.total_bytes ? `，其中你上載嘅佔 ${fmtMB(u.my_bytes)}` : ''}。大約仲可以放 ${Math.max(0, Math.floor((FREE_LIMIT - u.total_bytes) / (0.5 * 1024 ** 2)))} 張平面作品。</div>
+        ${pct > 70 ? `<div class="notice" style="margin:10px 0 0">空間用咗 ${pct.toFixed(0)}%。可以刪除舊畫廊，或者喺 Supabase 升級 Pro（每月 US$25，100 GB）。</div>` : ''}`;
+    } catch (e) {
+      el.innerHTML = e.message === 'NEED_UPDATE_3' ? '<div class="notice" style="margin:0">要先更新資料庫先睇到：喺 Supabase 嘅 SQL Editor 執行 <code>supabase/update-3.sql</code>（GitHub repo 入面有）。</div>' : `<p class="status err">讀取失敗：${esc(e.message)}</p>`;
+    }
+  })();
+
+  // 備份
+  $('#bk').onclick = async () => {
+    const st = $('#bk-st'); $('#bk').disabled = true; st.className = 'status'; st.textContent = '整理緊…';
+    try {
+      await loadXLSX();
+      const d = await db.backupData();
+      const gById = Object.fromEntries(d.galleries.map((g) => [g.id, g])); const hById = Object.fromEntries(d.halls.map((h) => [h.id, h])); const aById = Object.fromEntries(d.artworks.map((a) => [a.id, a]));
+      const url = async (p) => (p && !p.startsWith('gen') && !p.startsWith('idb:') ? await db.mediaUrl(p) : '');
+      const arts = []; for (const a of d.artworks) { const h = hById[a.hall_id] || {}; const g = gById[h.gallery_id] || {};
+        arts.push({ 畫廊: `${g.edition || ''} ${g.title || ''}`.trim(), 通道: h.name || '', 班別: a.student_class || '', 學號: a.student_no ?? '', 姓名: a.student_name || '', 作品題目: a.title || '', 種類: KIND_NAME[a.kind || 'flat'], 讚數: d.reactions.filter((r) => r.artwork_id === a.id).length, 相片連結: await url(a.image_path), '3D 檔連結': await url(a.model_path), 上載時間: fmtTime(a.created_at) }); }
+      const reacts = d.reactions.map((r) => { const a = aById[r.artwork_id] || {}; const g = gById[(hById[a.hall_id] || {}).gallery_id] || {};
+        return { 畫廊: g.title || '', 作品: a.title || '', 作者: personLabel(a.student_class, a.student_no, a.student_name), 讚賞者: personLabel(r.from_class, r.from_class === '老師' ? '' : r.from_no, r.from_name), 貼紙: STICKER_NAME[r.sticker] || r.sticker, 讚美詞: r.phrase, 時間: fmtTime(r.created_at) }; }).sort((x, y) => y.時間.localeCompare(x.時間));
+      const gals = d.galleries.map((g) => ({ 作品名稱: g.title, 第幾屆: g.edition || '', 副題: g.subtitle || '', 年級: gradeLabel(g.grade), 風格: THEMES[g.theme]?.name || '', 通道: d.halls.filter((h) => h.gallery_id === g.id).map((h) => h.name).join('、'), 作品數: d.artworks.filter((a) => (hById[a.hall_id] || {}).gallery_id === g.id).length }));
+      const studs = [...d.students].sort((a, b) => a.class_name.localeCompare(b.class_name) || a.number - b.number).map((s) => ({ 班別: s.class_name, 學號: s.number, 姓名: s.name,
+        作品數: d.artworks.filter((a) => a.student_class === s.class_name && Number(a.student_no) === s.number).length,
+        收到讚數: d.reactions.filter((r) => { const a = aById[r.artwork_id]; return a && a.student_class === s.class_name && Number(a.student_no) === s.number; }).length,
+        送出讚數: d.reactions.filter((r) => r.from_class === s.class_name && Number(r.from_no) === s.number).length }));
+      const X = window.XLSX; const wb = X.utils.book_new();
+      const add = (rows, name, empty) => { const ws = X.utils.json_to_sheet(rows.length ? rows : [{ [empty]: '（未有資料）' }]); const keys = Object.keys(rows[0] || { [empty]: '' }); ws['!cols'] = keys.map((k) => ({ wch: Math.min(50, Math.max(8, k.length * 2 + 2, ...rows.slice(0, 200).map((r) => String(r[k] ?? '').length + 2))) })); X.utils.book_append_sheet(wb, ws, name); };
+      add(gals, '畫廊', '作品名稱'); add(arts, '作品', '畫廊'); add(studs, '學生', '班別'); add(reacts, '讚賞紀錄', '畫廊');
+      const day = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Hong_Kong' });
+      X.writeFile(wb, `學生作品畫廊備份-${day}.xlsx`);
+      st.className = 'status ok'; st.textContent = `完成：${d.galleries.length} 個畫廊、${d.artworks.length} 件作品、${d.reactions.length} 個讚賞`;
+    } catch (e) { st.className = 'status err'; st.textContent = '備份失敗：' + e.message; }
+    $('#bk').disabled = false;
+  };
+
+  // 補做預覽圖
+  (async () => {
+    const el = $('#th');
+    let d; try { d = await db.backupData(); } catch (e) { el.innerHTML = `<p class="status err">${esc(e.message)}</p>`; return; }
+    const need = d.artworks.filter((a) => (a.kind || 'flat') === 'flat' && !a.thumb_path && a.image_path);
+    if (!need.length) { el.innerHTML = '<p class="status ok" style="font-size:15px">✅ 所有平面作品都有預覽圖</p>'; return; }
+    el.innerHTML = `<p style="margin:0 0 10px"><b>${need.length}</b> 件作品未有預覽圖。</p><button class="btn primary" id="th-go">開始補做</button> <span class="status" id="th-st"></span>
+      <div style="height:10px;background:#f1ece3;border-radius:99px;overflow:hidden;margin-top:10px" class="hidden" id="th-barw"><div id="th-bar" style="height:100%;width:0;background:#2b8a3e"></div></div>`;
+    $('#th-go').onclick = async () => {
+      $('#th-go').disabled = true; $('#th-barw').classList.remove('hidden'); let ok = 0, fail = 0, lastErr = '';
+      for (const [i, a] of need.entries()) {
+        $('#th-st').textContent = `${i + 1} / ${need.length}`;
+        try { const r = await fetch(await db.mediaUrl(a.image_path)); if (!r.ok) throw new Error('下載唔到原圖'); await db.setThumb(a, await resizeImage(await r.blob(), 800)); ok++; }
+        catch (e) { fail++; lastErr = e.message; if (/資料庫要先更新/.test(e.message)) break; }
+        $('#th-bar').style.width = ((i + 1) / need.length * 100) + '%';
+      }
+      $('#th-st').className = fail ? 'status err' : 'status ok';
+      $('#th-st').textContent = fail ? `完成 ${ok} 件，${fail} 件失敗：${lastErr}` : `✅ 完成 ${ok} 件`;
+    };
+  })();
+}
+
+const fmtTime = (t) => (t ? new Date(t).toLocaleString('sv-SE', { timeZone: 'Asia/Hong_Kong' }).slice(0, 16) : '');
+let xlsxP;
+function loadXLSX() {
+  if (window.XLSX) return Promise.resolve();
+  return (xlsxP ||= new Promise((ok, bad) => { const sc = document.createElement('script'); sc.src = 'vendor/xlsx.full.min.js'; sc.onload = ok; sc.onerror = () => { xlsxP = null; bad(new Error('載入唔到 Excel 工具')); }; document.head.appendChild(sc); }));
 }

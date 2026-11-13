@@ -1,6 +1,6 @@
 // 3D 畫廊場景：大堂（門口大標題＋各班通道）同展廳
 import * as THREE from 'three';
-import { themeColors, COLORFUL_PANELS, FONT, KIDS_FONT, stickerUrl } from './constants.js?v=20261113b';
+import { themeColors, COLORFUL_PANELS, FONT, KIDS_FONT, stickerUrl } from './constants.js?v=20261113c';
 
 const EYE = 1.6;
 const SPEED = 2.6;
@@ -411,7 +411,7 @@ export class Gallery3D {
 
   _loadPedestalModel(entry) {
     entry.modelState = 'loading';
-    import('./models.js?v=20261113b').then(({ loadArtModel, normalize }) => loadArtModel(this.media.db, entry.art.model_path).then((obj) => {
+    import('./models.js?v=20261113c').then(({ loadArtModel, normalize }) => loadArtModel(this.media.db, entry.art.model_path).then((obj) => {
       if (!entry.group.parent) return;
       const m = normalize(obj, 0.85); m.traverse((o) => { if (o.isMesh) o.castShadow = true; }); entry.holder.remove(entry.placeholder); entry.holder.add(m); entry.model = m; entry.modelState = 'ready';
     })).catch((e) => { console.warn('模型載入失敗', e); entry.modelState = 'error'; if (entry.placeholder) entry.placeholder.material.color.set('#e8a0a0'); });

@@ -1,0 +1,31 @@
+# 保持 Supabase 運作：每日連一次資料庫，免費 project 就唔會因為 7 日冇人用而暫停。
+# GitHub 會停用 60 日冇活動嘅 repo 嘅定時工作，所以如果太耐冇更新，呢個工作會自動加一個細 commit。
+name: 保持 Supabase 運作
+on:
+  schedule:
+    - cron: '17 1 * * *'   # 每日香港時間 09:17
+  workflow_dispatch:       # 亦可以喺 Actions 頁面手動撳 Run workflow
+permissions:
+  contents: write
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 連一次 Supabase
+        run: |
+          URL=$(grep -oP "SUPABASE_URL = '\K[^']*" js/config.js || true)
+          KEY=$(grep -oP "SUPABASE_ANON_KEY = '\K[^']*" js/config.js || true)
+          if [ -z "$URL" ] || [ -z "$KEY" ]; then echo "未設定 Supabase，略過"; exit 0; fi
+          curl -sS --fail-with-body --retry 3 -X POST "$URL/rest/v1/rpc/link_info" \
+            -H "apikey: $KEY" -H "Content-Type: application/json" -d '{"p_code":"keepalive"}'
+          echo; echo "✅ 已連線"
+      - name: 避免 GitHub 停用定時工作
+        run: |
+          LAST=$(git log -1 --format=%ct)
+          if [ $(( $(date +%s) - LAST )) -gt $(( 45 * 86400 )) ]; then
+            date -u +%FT%TZ > .keepalive
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .keepalive && git commit -m "保持定時工作運作" && git push
+          fi

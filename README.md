@@ -46,5 +46,13 @@
 ## 更新舊資料庫
 如果你喺 2026 年 11 月 13 日之前已經 Run 過 `setup.sql`，要喺 Supabase 嘅 SQL Editor 再 Run 一次 `supabase/update-2.sql`（只有 3 行），先可以儲存展室同陽光設定。
 
+## 空間同備份（老師管理 →「空間同備份」）
+- **儲存空間**：顯示已用幾多（免費上限 1 GB），用到 70% 會提你。上載前空間就嚟滿亦會先問你
+- **備份做 Excel**：一次過下載畫廊、作品、學生（作品數、收到同送出嘅讚數）同讚賞紀錄
+- **補做預覽圖**：舊作品一鍵補做細圖，展廳載入更快
+- **自動保持運作**：GitHub 每日香港時間 09:17 自動連一次 Supabase，免費 project 就唔會暫停（`.github/workflows/keepalive.yml`）
+
+要用空間顯示，要喺 Supabase 執行一次 `supabase/update-3.sql`。
+
 ## 修改貼紙或讚美詞
 改完 `js/constants.js` 之後，記得同步修改 `supabase/setup.sql` 入面 `reactions` 表嘅清單，然後喺 Supabase 重新 Run 一次。

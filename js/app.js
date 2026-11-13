@@ -1,7 +1,7 @@
-import { db, DuplicateError } from './data.js?v=20261113b';
-import { SITE_NAME } from './config.js?v=20261113b';
-import { STICKERS, PHRASES, THEMES, themeColors, stickerUrl, gradeLabel } from './constants.js?v=20261113b';
-import { $, $$, esc, toast, store, show, personLabel, hourLabel } from './ui.js?v=20261113b';
+import { db, DuplicateError } from './data.js?v=20261113c';
+import { SITE_NAME } from './config.js?v=20261113c';
+import { STICKERS, PHRASES, THEMES, themeColors, stickerUrl, gradeLabel } from './constants.js?v=20261113c';
+import { $, $$, esc, toast, store, show, personLabel, hourLabel } from './ui.js?v=20261113c';
 
 // S.code：學生連結代碼（冇就係老師模式）
 const S = { code: null, link: null, teacher: null, galleries: [], cur: null, hall: null, hallArts: [], reactions: {}, me: store.get('gallery-me'), viewer: null, modalIdx: -1, modalDispose: null, poll: null };
@@ -31,7 +31,7 @@ async function ensureFonts(text) {
 async function route() {
   const h = location.hash.slice(1);
   closeModal(); stopPoll();
-  if (h === 'admin') { const m = await import('./admin.js?v=20261113b'); m.openAdmin(); return; }
+  if (h === 'admin') { const m = await import('./admin.js?v=20261113c'); m.openAdmin(); return; }
   let m = h.match(/^s-([a-z0-9]{4,16})(?:-g-(.+))?$/);
   if (m) {
     S.me = store.get('gallery-me');
@@ -146,7 +146,7 @@ async function fade(fn) { const f = $('#fade'); f.classList.add('on'); await new
 
 async function ensureViewer() {
   if (S.viewer) return S.viewer;
-  const { Gallery3D } = await import('./gallery3d.js?v=20261113b');
+  const { Gallery3D } = await import('./gallery3d.js?v=20261113c');
   S.viewer = new Gallery3D($('#three-host'), { onArt: (a) => openModal(S.hallArts.findIndex((x) => x.id === a.id)), onEnterHall: (h) => enterHall(h), onExitHall: () => exitHall(), onRoom: (k, n, counts) => updateRoomChip(k, n, counts) });
   setupHudPanels();
   setupJoystick();
@@ -258,12 +258,12 @@ async function openModal(i) {
   const idx = S.modalIdx;
   if (a.kind === 'model') {
     view.classList.add('is-3d');
-    const { openModelView } = await import('./modal-viewer.js?v=20261113b');
+    const { openModelView } = await import('./modal-viewer.js?v=20261113c');
     if (S.modalIdx === idx) S.modalDispose = openModelView(view, db, a.model_path);
   } else if (a.kind === 'photos') {
     view.classList.add('is-3d');
     const urls = await Promise.all((a.photo_paths || []).map((p) => db.mediaUrl(p)));
-    const { openPhotoSpin } = await import('./modal-viewer.js?v=20261113b');
+    const { openPhotoSpin } = await import('./modal-viewer.js?v=20261113c');
     if (S.modalIdx === idx) S.modalDispose = openPhotoSpin(view, urls);
   } else {
     const img = document.createElement('img'); img.alt = ''; img.src = await db.mediaUrl(a.image_path); view.appendChild(img);
