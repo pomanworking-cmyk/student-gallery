@@ -1,6 +1,20 @@
 // 3D 畫廊場景：大堂（門口大標題＋各班通道）同展廳
 import * as THREE from 'three';
-import { themeColors, COLORFUL_PANELS, FONT, KIDS_FONT, stickerUrl } from './constants.js?v=20261113c';
+import { themeColors, COLORFUL_PANELS, FONT, KIDS_FONT, stickerUrl } from './constants.js?v=20261113d';
+import { RoomEnvironment } from '../vendor/jsm/environments/RoomEnvironment.js';
+
+// 寫實材質（textures/ 入面嘅檔案係程序生成，可以自由使用）
+const TEX = {};
+const texLoader = new THREE.TextureLoader();
+function pbr(name, srgb) {
+  if (!TEX[name]) { const e = { clones: [], loaded: false }; e.tex = texLoader.load(`textures/${name}.jpg`, () => { e.loaded = true; e.clones.forEach((c) => (c.needsUpdate = true)); });
+    e.tex.wrapS = e.tex.wrapT = THREE.RepeatWrapping; e.tex.anisotropy = 8; if (srgb) e.tex.colorSpace = THREE.SRGBColorSpace; TEX[name] = e; }
+  return TEX[name];
+}
+function pbrSet(base, rx, ry, albedo = true) {
+  const r = (e) => { const c = e.tex.clone(); c.repeat.set(rx, ry); if (e.loaded) c.needsUpdate = true; else e.clones.push(c); return c; };
+  return { map: albedo ? r(pbr(base + '_albedo', true)) : null, normalMap: r(pbr(base + '_normal')), roughnessMap: r(pbr(base + '_rough')) };
+}
 
 const EYE = 1.6;
 const SPEED = 2.6;
@@ -29,8 +43,13 @@ export class Gallery3D {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.shadowMap.enabled = true; this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 1.05;
+    const pm = new THREE.PMREMGenerator(this.renderer); this.envMap = pm.fromScene(new RoomEnvironment(), 0.04).texture; pm.dispose();
     this.sunOverride = null; this._ft = [];
     this.lowQ = window.GALLERY_QUALITY !== 'high' && ((navigator.deviceMemory && navigator.deviceMemory <= 2) || (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2));
+    if (this.lowQ) this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25));
+    // 射燈池：數量固定（換房唔使重新編譯 shader），每隔一陣搬去最近嘅作品
+    this.spotPool = []; this.SPOTS = this.lowQ ? 0 : 6;
     host.appendChild(this.renderer.domElement);
     this.camera = new THREE.PerspectiveCamera(68, 1, 0.05, 120);
     this.camera.rotation.order = 'YXZ';
@@ -58,10 +77,10 @@ export class Gallery3D {
     this.root.clear();
     this.disposables.forEach((d) => d.dispose?.()); this.disposables = [];
     this.clickables = []; this.arts = []; this.pedestals = []; this.glide = null;
-    this.rooms = []; this.partitions = []; this.skyPatches = []; this._glowTex = null; this.nightGlowMat = null; this.curRoom = -1; this._sunHour = null; this._ft = [];
+    this.rooms = []; this.obstacles = []; this.spotPool = []; this.lightSpots = []; this._glassM = null; this._leafM = null; this.glassList = []; this._spotT = 0; this.partitions = []; this.skyPatches = []; this._glowTex = null; this.nightGlowMat = null; this.curRoom = -1; this._sunHour = null; this._ft = [];
   }
   _track(o) { this.disposables.push(o); return o; }
-  _mat(color, opts = {}) { return this._track(new THREE.MeshLambertMaterial({ color, ...opts })); }
+  _mat(color, opts = {}) { return this._track(new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0, ...opts })); }
   _basic(opts) { return this._track(new THREE.MeshBasicMaterial(opts)); }
   _plane(w, h, mat) { return new THREE.Mesh(this._track(new THREE.PlaneGeometry(w, h)), mat); }
   _box(w, h, d, mat) { return new THREE.Mesh(this._track(new THREE.BoxGeometry(w, h, d)), mat); }
@@ -107,10 +126,12 @@ export class Gallery3D {
     this.scene.background = new THREE.Color(col.bg);
     this.scene.fog = new THREE.Fog(col.bg, 18, 60);
     this.sunCfg = normalizeLight(gallery.light); this.sunOn = this.sunCfg.mode !== 'off';
-    const hemi = new THREE.HemisphereLight(0xffffff, 0xf3efe8, 1.3); this.root.add(hemi);
-    const amb = new THREE.AmbientLight(0xffffff, 1.4); this.root.add(amb);
-    const dir = new THREE.DirectionalLight(0xffffff, 0.5); dir.position.set(2, 6, 3); this.root.add(dir);
+    this.scene.environment = this.envMap; this.scene.environmentIntensity = 0.55;
+    const hemi = new THREE.HemisphereLight(0xfffaf2, new THREE.Color(col.floor).multiplyScalar(0.6), 0.55); this.root.add(hemi);
+    const amb = new THREE.AmbientLight(0xffffff, 0.35); this.root.add(amb);
+    const dir = new THREE.DirectionalLight(0xfff4e6, 0.7); dir.position.set(2, 6, 3); this.root.add(dir);
     this.L = { hemi, amb, dir };
+    for (let i = 0; i < this.SPOTS; i++) { const sp = new THREE.SpotLight(0xfff1dc, 0, 7.5, 0.42, 0.65, 1.6); sp.userData.on = 0; this.root.add(sp, sp.target); this.spotPool.push(sp); }
     if (this.sunOn) {
       this.root.add(dir.target);
       const sh = dir.shadow; sh.mapSize.set(2048, 2048); sh.bias = -0.0008; sh.normalBias = 0.05;
@@ -121,6 +142,11 @@ export class Gallery3D {
     }
   }
 
+  _glassMat() { return this._glassM ||= this._track(new THREE.MeshStandardMaterial({ color: 0x000000, roughness: 0.06, metalness: 0, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, envMapIntensity: 1.6 })); }
+  _getAOTex() {
+    if (!this._aoTex) { const c = document.createElement('canvas'); c.width = 4; c.height = 128; const x = c.getContext('2d'); const g = x.createLinearGradient(0, 0, 0, 128); g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.55, 'rgba(255,255,255,.25)'); g.addColorStop(1, 'rgba(255,255,255,1)'); x.fillStyle = g; x.fillRect(0, 0, 4, 128); this._aoTex = new THREE.CanvasTexture(c); }
+    return this._aoTex;
+  }
   _getGlowTex() {
     if (!this._glowTex) { const c = document.createElement('canvas'); c.width = c.height = 256; const x = c.getContext('2d'); const g = x.createRadialGradient(128, 110, 10, 128, 128, 128); g.addColorStop(0, 'rgba(255,244,220,.6)'); g.addColorStop(1, 'rgba(255,244,220,0)'); x.fillStyle = g; x.fillRect(0, 0, 256, 256); this._glowTex = this._canvasTex(c); }
     return this._glowTex;
@@ -142,8 +168,8 @@ export class Gallery3D {
     const tz = Math.round(this.pos.z / 3) * 3;
     if (this._sunHour == null || Math.abs(h - this._sunHour) > 0.004) {
       this._sunHour = h; const st = this._sun = sunState(h);
-      L.dir.color.copy(st.sunColor); L.dir.intensity = st.sunI;
-      L.amb.intensity = st.amb; L.amb.color.copy(st.ambColor); L.hemi.intensity = st.hemi; L.hemi.color.copy(st.ambColor);
+      L.dir.color.copy(st.sunColor); L.dir.intensity = st.sunI * 1.5;
+      L.amb.intensity = st.amb * 0.3; L.amb.color.copy(st.ambColor); L.hemi.intensity = st.hemi * 0.55; L.hemi.color.copy(st.ambColor); this.scene.environmentIntensity = 0.12 + 0.5 * st.dayF; this._nightBoost = 1 + st.night * 1.6;
       this.scene.background.copy(st.sky);
       this.scene.fog.color.set(this.colors.bg).multiplyScalar(0.25 + 0.75 * st.dayF);
       L.torch.intensity = st.night * 14;
@@ -159,14 +185,17 @@ export class Gallery3D {
     L.dir.target.position.set(0, 0, tz); L.dir.position.copy(L.dir.target.position).addScaledVector(this._sun.dir, 60);
     L.torch.position.set(this.pos.x, this.pos.y + 0.7, this.pos.z);
   }
-  _setLowQ() { if (this.lowQ) return; this.lowQ = true; if (this.L?.dir) this.L.dir.castShadow = false; this._sunHour = null; }
+  _setLowQ() { if (this.lowQ) return; this.lowQ = true; if (this.L?.dir) this.L.dir.castShadow = false; this._sunHour = null; this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25)); for (const g of this.glassList || []) g.visible = false; }
 
   // 房間：地板、天花、牆（牆可以有門口洞）
   _room({ W, D, H, holes = {} }) {
     const col = this.colors;
-    const floorTex = this._floorTexture(this.theme, col.floor); floorTex.repeat.set(W / 4, D / 4);
-    const floor = this._plane(W, D, this._mat(0xffffff, { map: floorTex })); floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; this.root.add(floor);
-    const ceilMat = this._mat(shade(col.wall, 0.04), { side: THREE.DoubleSide });
+    let floorMat;
+    if (this.theme === 'kids') { const floorTex = this._floorTexture(this.theme, col.floor); floorTex.repeat.set(W / 4, D / 4); const ps = pbrSet('rubber', W / 4, D / 4, false); floorMat = this._mat(0xffffff, { map: floorTex, normalMap: ps.normalMap, roughnessMap: ps.roughnessMap, roughness: 1, normalScale: new THREE.Vector2(0.6, 0.6) }); }
+    else if (this.theme === 'colorful') { const ps = pbrSet('terrazzo', W / 3, D / 3); floorMat = this._mat(new THREE.Color(col.floor).lerp(new THREE.Color('#ffffff'), 0.08), { ...ps, roughness: 1, envMapIntensity: 1.3, normalScale: new THREE.Vector2(0.4, 0.4) }); }
+    else { const ps = pbrSet('wood', W / 3.2, D / 3.2); floorMat = this._mat(new THREE.Color(col.floor).lerp(new THREE.Color('#ffffff'), 0.12), { ...ps, roughness: 1, envMapIntensity: 1.1 }); }
+    const floor = this._plane(W, D, floorMat); floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; this.root.add(floor);
+    const ceilMat = this._mat(shade(col.wall, 0.04), { side: THREE.DoubleSide, roughness: 0.95 });
     if (this.sunOn) { // 天花開天窗，等陽光照入嚟
       const sw = Math.min(W * 0.42, 3.4), sd = 1.7;
       const cs = new THREE.Shape(); cs.moveTo(-W / 2, -D / 2); cs.lineTo(W / 2, -D / 2); cs.lineTo(W / 2, D / 2); cs.lineTo(-W / 2, D / 2); cs.closePath();
@@ -181,9 +210,14 @@ export class Gallery3D {
       const ceil = new THREE.Mesh(this._track(new THREE.ShapeGeometry(cs)), ceilMat); ceil.rotation.x = Math.PI / 2; ceil.position.y = H; ceil.castShadow = true; this.root.add(ceil);
     } else { const ceil = this._plane(W, D, ceilMat); ceil.rotation.x = Math.PI / 2; ceil.position.y = H; this.root.add(ceil); }
     // 天花燈條
+    // 天花路軌燈
+    const railMat = this._mat('#2b2b2b', { roughness: 0.4, metalness: 0.6 });
+    [-W / 2 + 1.1, W / 2 - 1.1].forEach((x) => { const r = this._box(0.05, 0.04, D - 0.4, railMat); r.position.set(x, H - 0.03, 0); this.root.add(r); });
     const lightMat = this._basic({ color: 0xffffff });
-    for (let z = -D / 2 + 2; z <= D / 2 - 2; z += 4) { const l = this._box(Math.min(W * 0.5, 3), 0.04, 0.35, lightMat); l.position.set(0, H - 0.03, z); this.root.add(l); }
-    const wallMat = this._mat(col.wall, { side: THREE.DoubleSide });
+    if (!this.sunOn) for (let z = -D / 2 + 2; z <= D / 2 - 2; z += 4) { const l = this._box(Math.min(W * 0.3, 2), 0.03, 0.25, lightMat); l.position.set(0, H - 0.02, z); this.root.add(l); }
+    const wps = pbrSet('plaster', 1 / 2.5, 1 / 2.5);
+    const wallMat = this._mat(col.wall, { side: THREE.DoubleSide, ...wps, roughness: 1, normalScale: new THREE.Vector2(0.5, 0.5) });
+    this._aoMat ||= null; const aoMat = this._basic({ map: this._getAOTex(), transparent: true, depthWrite: false, color: 0x000000, opacity: 0.32, side: THREE.DoubleSide });
     const mkWall = (len, holeList, pos, rotY) => {
       const s = new THREE.Shape(); s.moveTo(-len / 2, 0); s.lineTo(len / 2, 0); s.lineTo(len / 2, H); s.lineTo(-len / 2, H); s.closePath();
       (holeList || []).forEach((hl) => { const p = new THREE.Path(); p.moveTo(hl.x - hl.w / 2, 0.001); p.lineTo(hl.x - hl.w / 2, hl.h); p.lineTo(hl.x + hl.w / 2, hl.h); p.lineTo(hl.x + hl.w / 2, 0.001); p.closePath(); s.holes.push(p); });
@@ -192,7 +226,13 @@ export class Gallery3D {
       const segs = []; let start = -len / 2;
       [...(holeList || [])].sort((a, b) => a.x - b.x).forEach((hl) => { segs.push([start, hl.x - hl.w / 2]); start = hl.x + hl.w / 2; }); segs.push([start, len / 2]);
       const bbMat = this._mat(shade(col.accent, this.theme === 'minimal' ? 0.6 : 0));
-      segs.forEach(([a, b]) => { if (b - a < 0.01) return; const bb = this._box(b - a, 0.12, 0.03, bbMat); bb.position.set((a + b) / 2, 0.06, 0.015); const g = new THREE.Group(); g.position.copy(pos); g.rotation.y = rotY; g.add(bb); this.root.add(g); });
+      segs.forEach(([a, b]) => { if (b - a < 0.01) return; const bb = this._box(b - a, 0.12, 0.03, bbMat); bb.position.set((a + b) / 2, 0.06, 0.015); const g = new THREE.Group(); g.position.copy(pos); g.rotation.y = rotY; g.add(bb);
+        // 牆腳陰影（假環境光遮蔽）：地板一條、牆身一條
+        const ao = this._plane(b - a, 0.55, aoMat); ao.rotation.x = Math.PI / 2; ao.position.set((a + b) / 2, 0.004, 0.275); g.add(ao);
+        const ao2 = this._plane(b - a, 0.5, aoMat); ao2.position.set((a + b) / 2, 0.25, 0.031); ao2.renderOrder = 1; g.add(ao2);
+        this.root.add(g); });
+      // 天花角位陰影
+      const ao3 = this._plane(len, 0.45, aoMat); const g3 = new THREE.Group(); g3.position.copy(pos); g3.rotation.y = rotY; ao3.rotation.z = Math.PI; ao3.position.set(0, H - 0.225, 0.006); g3.add(ao3); this.root.add(g3);
     };
     mkWall(W, holes.front, new THREE.Vector3(0, 0, -D / 2), 0);
     mkWall(W, holes.back, new THREE.Vector3(0, 0, D / 2), Math.PI);
@@ -267,6 +307,7 @@ export class Gallery3D {
     this.bounds = { minX: -W / 2 + 0.5, maxX: W / 2 - 0.5, minZ: -D / 2 + 0.45, maxZ: D / 2 - 0.5, frontZ: -D / 2 };
     this.pos.set(0, EYE, D / 2 - 2.2); this.yaw = 0; this.pitch = 0.12;
     this.lobbyInfo = { D };
+    this._furnishLobby(gallery, W, D, H);
     this._updateSun();
   }
 
@@ -346,10 +387,114 @@ export class Gallery3D {
       this._buildStickers(e, reactionsByArt[e.art.id] || []);
     });
     this.pedestals = all.filter((e) => e.type === 'pedestal');
+    this.pedestals.forEach((e) => this.obstacles.push({ x: e.x, z: e.z, rx: 0.75, rz: 0.75 }));
+    // 射燈燈頭（路軌上）同射燈目標
+    const housingMat = this._mat('#1d1d1d', { roughness: 0.35, metalness: 0.7 });
+    const housingGeo = this._track(new THREE.CylinderGeometry(0.055, 0.07, 0.2, 16));
+    for (const e of all) {
+      const tp = e.type === 'wall' ? e.group.localToWorld(new THREE.Vector3(0, 1.75, 0)) : e.group.localToWorld(new THREE.Vector3(0, 1.4, 0));
+      const lp = e.type === 'wall' ? new THREE.Vector3(Math.sign(tp.x) * (W / 2 - 1.1), H - 0.18, e.z) : new THREE.Vector3(e.x + (e.x >= 0 ? -0.9 : 0.9), H - 0.18, e.z + 1.1);
+      const hs = new THREE.Mesh(housingGeo, housingMat); hs.position.copy(lp); hs.lookAt(tp); hs.rotateX(Math.PI / 2); this.root.add(hs);
+      const lens = this._plane(0.09, 0.09, this._basic({ color: 0xfff6e5 })); lens.position.copy(lp).addScaledVector(tp.clone().sub(lp).normalize(), 0.105); lens.lookAt(tp); this.root.add(lens);
+      this.lightSpots.push({ e, pos: lp, target: tp });
+    }
+    this._furnishHall(gallery, hall, rooms, W, H, D);
     this.bounds = { minX: -W / 2 + 0.6, maxX: W / 2 - 0.6, minZ: -D / 2 + 0.6, maxZ: D / 2 - 0.5, backZ: D / 2 };
     this.pos.set(0, EYE, D / 2 - 1.3); this.yaw = 0; this.pitch = 0; this._prevZ = this.pos.z;
     this.currentArt = -1;
     this._setRoom(0); this._updateSun();
+  }
+
+  // ---------- 射燈 ----------
+  _updateSpots(dt) {
+    if (!this.spotPool.length) return;
+    this._spotT -= dt;
+    if (this._spotT <= 0) {
+      this._spotT = 0.25;
+      const cand = this.mode === 'hall' ? this.lightSpots.filter((l) => Math.abs(l.e.room - this.curRoom) <= 1) : [];
+      cand.sort((a, b) => Math.abs(a.pos.z - this.pos.z) - Math.abs(b.pos.z - this.pos.z));
+      const pick = cand.slice(0, this.spotPool.length);
+      this.spotPool.forEach((sp, i) => { const l = pick[i]; sp.userData.want = l ? 1 : 0; if (l && sp.userData.ref !== l) { sp.userData.ref = l; sp.position.copy(l.pos); sp.target.position.copy(l.target); sp.target.updateMatrixWorld(); if (sp.userData.on < 0.05) sp.userData.on = 0; } });
+    }
+    const base = (this.sunOn ? 11 : 16) * (this._nightBoost || 1);
+    for (const sp of this.spotPool) { const u = sp.userData; u.on += ((u.want || 0) - u.on) * Math.min(1, dt * 3); sp.intensity = base * u.on; }
+  }
+
+  // ---------- 擺設 ----------
+  _leafMat() { return this._leafM ||= this._mat('#3f7a3a', { roughness: 0.6, side: THREE.DoubleSide }); }
+  _plant(x, z, scale = 1) {
+    const g = new THREE.Group(); g.position.set(x, 0, z); g.scale.setScalar(scale);
+    const potCol = this.theme === 'minimal' ? '#e8e3da' : this.theme === 'kids' ? '#ef8354' : '#2b2b2b';
+    const pot = new THREE.Mesh(this._track(new THREE.CylinderGeometry(0.26, 0.2, 0.5, 24)), this._mat(potCol, { roughness: 0.55 })); pot.position.y = 0.25; pot.castShadow = true; g.add(pot);
+    const soil = new THREE.Mesh(this._track(new THREE.CircleGeometry(0.24, 24)), this._mat('#3b2a1f')); soil.rotation.x = -Math.PI / 2; soil.position.y = 0.47; g.add(soil);
+    const leafShape = new THREE.Shape(); leafShape.moveTo(0, 0); leafShape.bezierCurveTo(0.18, 0.12, 0.2, 0.45, 0, 0.62); leafShape.bezierCurveTo(-0.2, 0.45, -0.18, 0.12, 0, 0);
+    const leafGeo = this._track(new THREE.ShapeGeometry(leafShape, 8)); const stemMat = this._mat('#4d6b35');
+    const stemGeo = this._track(new THREE.CylinderGeometry(0.008, 0.012, 1, 6));
+    for (let k = 0; k < 11; k++) {
+      const a = k * 2.4 + 0.3, len = 0.55 + ((k * 37) % 7) * 0.09, tilt = 0.25 + ((k * 13) % 5) * 0.09;
+      const dir = new THREE.Vector3(Math.cos(a) * Math.sin(tilt), Math.cos(tilt), Math.sin(a) * Math.sin(tilt));
+      const end = new THREE.Vector3(0, 0.45, 0).addScaledVector(dir, len);
+      const st = new THREE.Mesh(stemGeo, stemMat); st.scale.y = len; st.position.set(0, 0.45, 0).addScaledVector(dir, len / 2); st.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir); g.add(st);
+      const lf = new THREE.Mesh(leafGeo, this._leafMat()); lf.position.copy(end); lf.rotation.set(-0.6 - tilt * 0.6, -a + Math.PI / 2, 0, 'YXZ'); lf.castShadow = true; g.add(lf);
+    }
+    this.root.add(g); this.obstacles.push({ x, z, rx: 0.45 * scale, rz: 0.45 * scale });
+  }
+  _bench(x, z, rotY = 0) {
+    const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = rotY;
+    const topCol = this.theme === 'kids' ? '#ffb703' : this.theme === 'colorful' ? '#f4f1ec' : '#b98b5e';
+    const ps = this.theme === 'minimal' ? pbrSet('wood', 0.6, 0.15) : {};
+    const top = this._box(1.7, 0.07, 0.48, this._mat(topCol, { ...ps, roughness: ps.roughnessMap ? 1 : 0.6 })); top.position.y = 0.45; top.castShadow = top.receiveShadow = true; g.add(top);
+    const legMat = this._mat('#3a3a3a', { roughness: 0.3, metalness: 0.85 });
+    [-0.68, 0.68].forEach((lx) => {
+      [-0.17, 0.17].forEach((lz) => { const leg = this._box(0.035, 0.42, 0.035, legMat); leg.position.set(lx, 0.21, lz); leg.castShadow = true; g.add(leg); });
+      const bar = this._box(0.035, 0.035, 0.38, legMat); bar.position.set(lx, 0.06, 0); g.add(bar);
+    });
+    const sh = this._plane(2.1, 0.9, this._basic({ map: this._getGlowTex(), color: 0x000000, transparent: true, opacity: 0.35, depthWrite: false })); sh.rotation.x = -Math.PI / 2; sh.position.y = 0.006; g.add(sh);
+    this.root.add(g);
+    const c = Math.abs(Math.cos(rotY)) > 0.5; this.obstacles.push({ x, z, rx: c ? 1.1 : 0.5, rz: c ? 0.5 : 1.1 });
+  }
+  _wallPanel(x, z, rotY, lines, w = 0.75, h = 0.55) {
+    const c = this._textCanvas({ w: Math.round(w * 800), h: Math.round(h * 800), bg: this.theme === 'minimal' ? '#ffffff' : '#fffdf8', radius: 10, lines });
+    const m = this._plane(w, h, this._mat(0xffffff, { map: this._canvasTex(c), emissiveMap: null, roughness: 0.9 }));
+    m.position.set(x, 1.55, z); m.rotation.y = rotY; this.root.add(m);
+    const edge = this._box(w + 0.02, h + 0.02, 0.012, this._mat('#d9d4cc')); edge.position.copy(m.position); edge.rotation.y = rotY; edge.translateZ(-0.007); this.root.add(edge);
+  }
+  _furnishHall(gallery, hall, rooms, W, H, D) {
+    const n = rooms.length; const ink = '#222', sub = '#666';
+    rooms.forEach((r, k) => {
+      const zBottom = r.zTop - r.depth;
+      // 展室介紹牌（入口左邊牆）
+      const first = rooms.slice(0, k).reduce((t, x) => t + x.count, 0) + 1;
+      const lines = k === 0
+        ? [{ text: gallery.edition || '', size: 34, color: sub, weight: 500 }, { text: gallery.title || '', size: 64, color: ink, weight: 900, font: this.titleFont }, { text: hall.name, size: 46, color: ink, weight: 700 }, { text: n > 1 ? `共 ${n} 間展室` : `共 ${r.count} 件作品`, size: 32, color: sub, weight: 500 }]
+        : [{ text: `展室 ${k + 1}`, size: 72, color: ink, weight: 900, font: this.titleFont }, { text: hall.name, size: 44, color: sub, weight: 700 }, { text: r.count ? `第 ${first}–${first + r.count - 1} 件作品` : '', size: 32, color: sub, weight: 500 }];
+      this._wallPanel(-W / 2 + 0.02, r.zTop - (k === 0 ? 1.4 : 0.85), Math.PI / 2, lines.filter((l) => l.text));
+      // 長凳：冇展台嘅展室先擺
+      if (!r.objs.length && r.depth >= 9) this._bench(0, (r.zTop + zBottom) / 2, Math.PI / 2);
+      // 植物：每間展室盡頭兩個角
+      this._plant(-W / 2 + 0.55, zBottom + 0.6, 1); this._plant(W / 2 - 0.55, zBottom + 0.6, 0.85 + (k % 2) * 0.2);
+    });
+  }
+  _furnishLobby(gallery, W, D, H) {
+    const col = this.colors;
+    // 兩邊牆嘅掛布橫額
+    const bCol = this.theme === 'minimal' ? '#1f1f1f' : col.accent;
+    const title = (gallery.title || '').slice(0, 8);
+    [-1, 1].forEach((sd) => {
+      const c = document.createElement('canvas'); c.width = 360; c.height = 1200; const x = c.getContext('2d');
+      x.fillStyle = bCol; x.fillRect(0, 0, 360, 1200);
+      x.fillStyle = 'rgba(255,255,255,.92)'; x.textAlign = 'center'; x.textBaseline = 'middle';
+      x.font = `500 44px ${FONT}`; x.fillText(gallery.edition || '', 180, 110);
+      const step = Math.min(150, 900 / Math.max(1, title.length)); x.font = `900 ${Math.round(step * 0.82)}px ${this.titleFont}`;
+      [...title].forEach((ch, i) => x.fillText(ch, 180, 230 + step * (i + 0.5)));
+      const tex = this._canvasTex(c);
+      const ban = this._plane(1.1, 3.6, this._mat(0xffffff, { map: tex, roughness: 0.95, side: THREE.DoubleSide }));
+      ban.position.set(sd * (W / 2 - 0.08), H - 2.2, -D / 2 + 2.6); ban.rotation.y = -sd * Math.PI / 2; this.root.add(ban);
+      const rod = this._box(0.04, 0.04, 1.3, this._mat('#2b2b2b', { metalness: 0.7, roughness: 0.3 })); rod.position.set(sd * (W / 2 - 0.1), H - 0.38, -D / 2 + 2.6); this.root.add(rod);
+    });
+    this._plant(-W / 2 + 0.6, -D / 2 + 0.7, 1.1); this._plant(W / 2 - 0.6, -D / 2 + 0.7, 1.1);
+    this._plant(-W / 2 + 0.6, D / 2 - 0.7, 0.9); this._plant(W / 2 - 0.6, D / 2 - 0.7, 0.9);
+    this._bench(-W / 2 + 2.6, 0.8, Math.PI / 2); this._bench(W / 2 - 2.6, 0.8, Math.PI / 2);
   }
 
   _roomAt(z) { for (let k = this.rooms.length - 1; k > 0; k--) if (z <= this.rooms[k].zTop) return k; return 0; }
@@ -411,7 +556,7 @@ export class Gallery3D {
 
   _loadPedestalModel(entry) {
     entry.modelState = 'loading';
-    import('./models.js?v=20261113c').then(({ loadArtModel, normalize }) => loadArtModel(this.media.db, entry.art.model_path).then((obj) => {
+    import('./models.js?v=20261113d').then(({ loadArtModel, normalize }) => loadArtModel(this.media.db, entry.art.model_path).then((obj) => {
       if (!entry.group.parent) return;
       const m = normalize(obj, 0.85); m.traverse((o) => { if (o.isMesh) o.castShadow = true; }); entry.holder.remove(entry.placeholder); entry.holder.add(m); entry.model = m; entry.modelState = 'ready';
     })).catch((e) => { console.warn('模型載入失敗', e); entry.modelState = 'error'; if (entry.placeholder) entry.placeholder.material.color.set('#e8a0a0'); });
@@ -428,7 +573,7 @@ export class Gallery3D {
       if (this.theme === 'colorful') {
         const panel = this._plane(w + 1.1, h + 1.4, this._mat(COLORFUL_PANELS[i % COLORFUL_PANELS.length])); panel.position.set(0, cy - 0.1, 0.005); holder.add(panel);
       }
-      if (this.theme === 'minimal') {
+      if (this.theme === 'minimal' && !this.SPOTS) {
         const glow = this._plane(w + 2.2, h + 2.2, this._basic({ map: this._getGlowTex(), transparent: true, depthWrite: false })); glow.position.set(0, cy + 0.15, 0.004); holder.add(glow);
       }
       if (this.nightGlowMat) { const ng = this._plane(w + 2.4, h + 2.6, this.nightGlowMat); ng.position.set(0, cy + 0.2, 0.007); holder.add(ng); }
@@ -436,9 +581,20 @@ export class Gallery3D {
       const fw = this.theme === 'kids' ? 0.12 : this.theme === 'colorful' ? 0.09 : 0.05;
       const mat = this.theme === 'minimal' ? 0.12 : 0;
       entry.size = { w, h, edge: w / 2 + fw + mat };
-      const frame = this._box(w + 2 * (fw + mat), h + 2 * (fw + mat), 0.06, this._mat(frameCol)); frame.position.set(0, cy, 0.03); frame.castShadow = true; holder.add(frame);
-      if (mat) { const m = this._plane(w + 2 * mat, h + 2 * mat, this._basic({ color: '#fbfaf7' })); m.position.set(0, cy, 0.061); holder.add(m); }
-      const pic = this._plane(w, h, this._basic({ map: tex || null, color: tex ? 0xffffff : 0xdddddd })); pic.position.set(0, cy, 0.064);
+      // 畫框：外框＋內斜邊（有立體感）
+      const fMat = this._mat(frameCol, { roughness: this.theme === 'minimal' ? 0.35 : 0.5, metalness: this.theme === 'minimal' ? 0.15 : 0, envMapIntensity: 0.8 });
+      const OW = w + 2 * (fw + mat), OH = h + 2 * (fw + mat);
+      [[0, OH / 2 - fw / 2, OW, fw], [0, -OH / 2 + fw / 2, OW, fw], [-OW / 2 + fw / 2, 0, fw, OH - 2 * fw], [OW / 2 - fw / 2, 0, fw, OH - 2 * fw]].forEach(([x, y, bw, bh]) => { const b = this._box(bw, bh, 0.06, fMat); b.position.set(x, cy + y, 0.03); b.castShadow = true; holder.add(b); });
+      const lipMat = this._mat(shade(frameCol, -0.12), { roughness: 0.5 });
+      const IW = OW - 2 * fw, IH = OH - 2 * fw, lip = 0.012;
+      [[0, IH / 2 - lip / 2, IW, lip], [0, -IH / 2 + lip / 2, IW, lip], [-IW / 2 + lip / 2, 0, lip, IH], [IW / 2 - lip / 2, 0, lip, IH]].forEach(([x, y, bw, bh]) => { const b = this._box(bw, bh, 0.03, lipMat); b.position.set(x, cy + y, 0.045); holder.add(b); });
+      const back = this._plane(IW, IH, this._mat('#e9e6df', { roughness: 0.95 })); back.position.set(0, cy, 0.03); holder.add(back);
+      if (mat) { const m = this._plane(w + 2 * mat, h + 2 * mat, this._mat('#fbfaf7', { roughness: 0.95 })); m.position.set(0, cy, 0.031); holder.add(m);
+        const bev = this._plane(w + 0.012, h + 0.012, this._mat('#efe9dd', { roughness: 0.9 })); bev.position.set(0, cy, 0.0315); holder.add(bev); }
+      const pic = this._plane(w, h, this._mat(0xffffff, tex ? { map: tex, emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: 0.42, roughness: 0.9 } : { color: 0xdddddd }));
+      pic.position.set(0, cy, mat ? 0.033 : 0.04); pic.receiveShadow = true;
+      // 玻璃反光（只喺效能夠嘅裝置）
+      const glass = this._plane(w + 2 * mat, h + 2 * mat, this._glassMat()); glass.position.set(0, cy, 0.052); glass.visible = !this.lowQ; holder.add(glass); (this.glassList ||= []).push(glass);
       pic.userData = { type: 'art', index: entry.index }; holder.add(pic); this.clickables.push(pic); entry.pic = pic;
       // 名牌
       const name = `${art.student_class || ''} ${art.student_no ? art.student_no + '號 ' : ''}${art.student_name || ''}`.trim();
@@ -458,13 +614,13 @@ export class Gallery3D {
         if (!g.parent || gen !== entry.gen) { tex.dispose(); return; }
         tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8; entry.tex = tex; entry.state = 'ready';
         if (!entry.placed) { this.clickables = this.clickables.filter((c) => !holder.children.includes(c)); place(tex.image.width / tex.image.height, tex); entry.placed = true; }
-        else { entry.pic.material.map = tex; entry.pic.material.color.set(0xffffff); entry.pic.material.needsUpdate = true; }
+        else { const m = entry.pic.material; m.map = tex; m.emissiveMap = tex; m.emissive.set(0xffffff); m.emissiveIntensity = 0.42; m.color.set(0xffffff); m.needsUpdate = true; }
       }, undefined, () => { if (gen === entry.gen) entry.state = 'error'; }));
     };
     entry.unload = () => {
       if (entry.state === 'loading') { entry.gen++; entry.state = 'idle'; return; }
       if (entry.state !== 'ready') return;
-      entry.pic.material.map = null; entry.pic.material.color.set(0xdddddd); entry.pic.material.needsUpdate = true; entry.tex?.dispose(); entry.tex = null; entry.state = 'idle';
+      { const m = entry.pic.material; m.map = null; m.emissiveMap = null; m.emissive?.set(0x000000); m.color.set(0xdddddd); m.needsUpdate = true; } entry.tex?.dispose(); entry.tex = null; entry.state = 'idle';
     };
   }
 
@@ -597,6 +753,7 @@ export class Gallery3D {
     }
     if (this.mode === 'hall' && this.rooms.length) this._setRoom(this._roomAt(this.pos.z));
     this._updateSun();
+    this._updateSpots(dt);
     this.camera.position.copy(this.pos); this.camera.rotation.set(this.pitch, this.yaw, 0);
     this.renderer.render(this.scene, this.camera);
   }
@@ -611,9 +768,10 @@ export class Gallery3D {
         p.z = Math.max(b.frontZ - 2.4, p.z);
       } else { p.z = Math.max(b.minZ, p.z); }
       p.x = Math.max(b.minX, Math.min(b.maxX, p.x)); p.z = Math.min(b.maxZ, p.z);
+      for (const o of this.obstacles || []) { const dx = p.x - o.x, dz = p.z - o.z; if (Math.abs(dx) < o.rx && Math.abs(dz) < o.rz) { if (o.rx - Math.abs(dx) < o.rz - Math.abs(dz)) p.x = o.x + Math.sign(dx || 1) * o.rx; else p.z = o.z + Math.sign(dz || 1) * o.rz; } }
     } else if (this.mode === 'hall') {
       p.x = Math.max(b.minX, Math.min(b.maxX, p.x)); p.z = Math.max(b.minZ, p.z);
-      for (const e of this.pedestals || []) { const dx = p.x - e.x, dz = p.z - e.z, r = 0.75; if (Math.abs(dx) < r && Math.abs(dz) < r) { if (r - Math.abs(dx) < r - Math.abs(dz)) p.x = e.x + Math.sign(dx || 1) * r; else p.z = e.z + Math.sign(dz || 1) * r; } }
+      for (const o of this.obstacles || []) { const dx = p.x - o.x, dz = p.z - o.z; if (Math.abs(dx) < o.rx && Math.abs(dz) < o.rz) { if (o.rx - Math.abs(dx) < o.rz - Math.abs(dz)) p.x = o.x + Math.sign(dx || 1) * o.rx; else p.z = o.z + Math.sign(dz || 1) * o.rz; } }
       const lim = this.hallDoorW / 2 - 0.35; for (const zb of this.partitions) { if (Math.abs(p.z - zb) < 0.35 && Math.abs(p.x) > lim) p.z = zb + (this._prevZ >= zb ? 0.35 : -0.35); }
       if (Math.abs(p.x) < 0.8 && p.z > b.maxZ) {
         if (p.z > b.backZ + 0.2 && !this._entering) { this._entering = true; this.h.onExitHall?.(); setTimeout(() => (this._entering = false), 1500); }

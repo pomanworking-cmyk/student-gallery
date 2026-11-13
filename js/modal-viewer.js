@@ -1,7 +1,7 @@
 // 作品詳情入面嘅 3D 檢視同多角度相片
 import * as THREE from 'three';
 import { OrbitControls } from '../vendor/jsm/controls/OrbitControls.js';
-import { loadArtModel, normalize, parseGLB } from './models.js?v=20261113c';
+import { loadArtModel, normalize, parseGLB } from './models.js?v=20261113d';
 
 export function openModelView(host, db, path) {
   host.innerHTML = '<div class="mv-hint">用手指拖動可以轉，兩隻手指可以放大縮細</div><div class="mv-loading">載入緊 3D 作品…</div>';
