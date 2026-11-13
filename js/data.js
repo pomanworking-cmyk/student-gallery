@@ -1,6 +1,6 @@
 // 資料層：有 Supabase 設定就用雲端，冇就用試用模式（只存喺呢部機）
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=20261113e';
-import { drawSampleArt } from './sample-art.js?v=20261113e';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=20261113f';
+import { drawSampleArt } from './sample-art.js?v=20261113f';
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Math.random().toString(36).slice(2) + Date.now().toString(36));
 const now = () => new Date().toISOString();
@@ -179,13 +179,13 @@ class DemoBackend {
     if (this._cache.has(p)) return this._cache.get(p);
     let url = '';
     if (p.startsWith('gen:')) url = drawSampleArt(Number(p.slice(4)));
-    else if (p.startsWith('genview:')) { const [, s, i] = p.split(':'); const { renderSampleViews } = await import('./sample-model.js?v=20261113e'); const views = renderSampleViews(Number(s)); views.forEach((v, j) => this._cache.set(`genview:${s}:${j}`, v)); url = views[Number(i)]; }
+    else if (p.startsWith('genview:')) { const [, s, i] = p.split(':'); const { renderSampleViews } = await import('./sample-model.js?v=20261113f'); const views = renderSampleViews(Number(s)); views.forEach((v, j) => this._cache.set(`genview:${s}:${j}`, v)); url = views[Number(i)]; }
     else if (p.startsWith('idb:')) { const b = await idbGet(p.slice(4)); url = b ? URL.createObjectURL(b) : drawSampleArt(1); }
     else url = p;
     this._cache.set(p, url); return url;
   }
   async loadModel(p) {
-    if (p.startsWith('genmodel:')) { const { buildSampleModel } = await import('./sample-model.js?v=20261113e'); return { object: buildSampleModel(Number(p.slice(9))) }; }
+    if (p.startsWith('genmodel:')) { const { buildSampleModel } = await import('./sample-model.js?v=20261113f'); return { object: buildSampleModel(Number(p.slice(9))) }; }
     const b = await idbGet(p.slice(4)); if (!b) throw new Error('搵唔到模型檔'); return { buffer: await b.arrayBuffer() };
   }
 }

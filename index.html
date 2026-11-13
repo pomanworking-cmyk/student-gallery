@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=Chiron+GoRound+TC:wght@400;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/style.css?v=20261113e">
+<link rel="stylesheet" href="css/style.css?v=20261113f">
 <script src="vendor/supabase.js"></script>
 <script src="vendor/qrcode.js"></script>
 <script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
@@ -83,7 +83,10 @@
       <button class="hud-chip hidden" id="hud-sun"></button>
       <button class="hud-chip hidden" id="hud-steps"></button>
     </div>
-    <canvas id="minimap" class="minimap hidden" width="150" height="220"></canvas>
+    <div class="map-wrap hidden" id="map-wrap">
+      <button class="map-toggle" id="map-toggle" aria-label="開／關地圖">🗺️ 地圖 <span id="map-arrow">▴</span></button>
+      <canvas id="minimap" class="minimap" width="150" height="220"></canvas>
+    </div>
     <div class="hud-panel hidden" id="steps-panel"></div>
     <div class="hud-panel hidden" id="room-menu"></div>
     <div class="hud-panel hidden" id="sun-panel">
@@ -129,6 +132,6 @@
   <div id="dialog" class="modal hidden"><div class="modal-box dialog-box"><p id="dialog-msg"></p><div class="dialog-actions"><button class="btn ghost" id="dialog-no">取消</button><button class="btn danger" id="dialog-yes">確定</button></div></div></div>
   <div id="fly" class="fly"></div>
 </div>
-<script type="module" src="js/app.js?v=20261113e"></script>
+<script type="module" src="js/app.js?v=20261113f"></script>
 </body>
 </html>

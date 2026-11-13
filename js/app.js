@@ -1,7 +1,7 @@
-import { db, DuplicateError } from './data.js?v=20261113e';
-import { SITE_NAME } from './config.js?v=20261113e';
-import { STICKERS, PHRASES, THEMES, themeColors, stickerUrl, gradeLabel } from './constants.js?v=20261113e';
-import { $, $$, esc, toast, store, show, personLabel, hourLabel } from './ui.js?v=20261113e';
+import { db, DuplicateError } from './data.js?v=20261113f';
+import { SITE_NAME } from './config.js?v=20261113f';
+import { STICKERS, PHRASES, THEMES, themeColors, stickerUrl, gradeLabel } from './constants.js?v=20261113f';
+import { $, $$, esc, toast, store, show, personLabel, hourLabel } from './ui.js?v=20261113f';
 
 // S.code：學生連結代碼（冇就係老師模式）
 const S = { seen: new Set(), seenGid: null, code: null, link: null, teacher: null, galleries: [], cur: null, hall: null, hallArts: [], reactions: {}, me: store.get('gallery-me'), viewer: null, modalIdx: -1, modalDispose: null, poll: null };
@@ -31,7 +31,7 @@ async function ensureFonts(text) {
 async function route() {
   const h = location.hash.slice(1);
   closeModal(); stopPoll();
-  if (h === 'admin') { const m = await import('./admin.js?v=20261113e'); m.openAdmin(); return; }
+  if (h === 'admin') { const m = await import('./admin.js?v=20261113f'); m.openAdmin(); return; }
   let m = h.match(/^s-([a-z0-9]{4,16})(?:-g-(.+))?$/);
   if (m) {
     S.me = store.get('gallery-me');
@@ -146,7 +146,7 @@ async function fade(fn) { const f = $('#fade'); f.classList.add('on'); await new
 
 async function ensureViewer() {
   if (S.viewer) return S.viewer;
-  const { Gallery3D } = await import('./gallery3d.js?v=20261113e');
+  const { Gallery3D } = await import('./gallery3d.js?v=20261113f');
   S.viewer = new Gallery3D($('#three-host'), { onArt: (a) => openModal(S.hallArts.findIndex((x) => x.id === a.id)), onEnterHall: (h) => enterHall(h), onExitHall: () => exitHall(), onRoom: (k, n, counts) => updateRoomChip(k, n, counts), onSeen: (a) => markSeen(a) });
   setupMinimap();
   setupHudPanels();
@@ -279,12 +279,16 @@ function setupMinimap() {
     const r = cv.getBoundingClientRect(); const yN = (e.clientY - r.top) / r.height; const z = st.top - yN * (st.D);
     const k = st.rooms.findIndex((rm) => z <= rm.zTop && z > rm.zTop - rm.depth); if (k >= 0 && k !== st.room) await fade(async () => S.viewer.goToRoom(k));
   };
+  const setMap = (open) => { $('#map-wrap').classList.toggle('closed', !open); $('#map-arrow').textContent = open ? '▴' : '▾'; store.set('gallery-map-open', open); };
+  $('#map-toggle').onclick = () => setMap($('#map-wrap').classList.contains('closed'));
+  setMap(store.get('gallery-map-open') !== false);
   clearInterval(mapTimer); mapTimer = setInterval(drawMinimap, 200);
 }
 function drawMinimap() {
   const cv = $('#minimap'); const st = S.viewer?.mapState?.();
-  if (!st || $('#screen-3d').classList.contains('hidden')) { cv.classList.add('hidden'); return; }
-  cv.classList.remove('hidden');
+  const wrap = $('#map-wrap');
+  if (!st || $('#screen-3d').classList.contains('hidden')) { wrap.classList.add('hidden'); return; }
+  wrap.classList.remove('hidden'); if (wrap.classList.contains('closed')) return;
   const pad = 8, W = 150, H = Math.round(Math.min(240, Math.max(120, (W - 2 * pad) * st.D / st.W + 2 * pad)));
   if (cv.height !== H) cv.height = H;
   const x = cv.getContext('2d'); x.clearRect(0, 0, W, H);
@@ -335,12 +339,12 @@ async function openModal(i) {
   const idx = S.modalIdx;
   if (a.kind === 'model') {
     view.classList.add('is-3d');
-    const { openModelView } = await import('./modal-viewer.js?v=20261113e');
+    const { openModelView } = await import('./modal-viewer.js?v=20261113f');
     if (S.modalIdx === idx) S.modalDispose = openModelView(view, db, a.model_path);
   } else if (a.kind === 'photos') {
     view.classList.add('is-3d');
     const urls = await Promise.all((a.photo_paths || []).map((p) => db.mediaUrl(p)));
-    const { openPhotoSpin } = await import('./modal-viewer.js?v=20261113e');
+    const { openPhotoSpin } = await import('./modal-viewer.js?v=20261113f');
     if (S.modalIdx === idx) S.modalDispose = openPhotoSpin(view, urls);
   } else {
     const img = document.createElement('img'); img.alt = ''; img.src = await db.mediaUrl(a.image_path); view.appendChild(img);
