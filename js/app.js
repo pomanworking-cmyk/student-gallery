@@ -1,10 +1,10 @@
-import { db, DuplicateError } from './data.js?v=20261113d';
-import { SITE_NAME } from './config.js?v=20261113d';
-import { STICKERS, PHRASES, THEMES, themeColors, stickerUrl, gradeLabel } from './constants.js?v=20261113d';
-import { $, $$, esc, toast, store, show, personLabel, hourLabel } from './ui.js?v=20261113d';
+import { db, DuplicateError } from './data.js?v=20261113e';
+import { SITE_NAME } from './config.js?v=20261113e';
+import { STICKERS, PHRASES, THEMES, themeColors, stickerUrl, gradeLabel } from './constants.js?v=20261113e';
+import { $, $$, esc, toast, store, show, personLabel, hourLabel } from './ui.js?v=20261113e';
 
 // S.code：學生連結代碼（冇就係老師模式）
-const S = { code: null, link: null, teacher: null, galleries: [], cur: null, hall: null, hallArts: [], reactions: {}, me: store.get('gallery-me'), viewer: null, modalIdx: -1, modalDispose: null, poll: null };
+const S = { seen: new Set(), seenGid: null, code: null, link: null, teacher: null, galleries: [], cur: null, hall: null, hallArts: [], reactions: {}, me: store.get('gallery-me'), viewer: null, modalIdx: -1, modalDispose: null, poll: null };
 
 // ---------- 資料來源：學生經連結／老師直接 ----------
 const src = {
@@ -31,7 +31,7 @@ async function ensureFonts(text) {
 async function route() {
   const h = location.hash.slice(1);
   closeModal(); stopPoll();
-  if (h === 'admin') { const m = await import('./admin.js?v=20261113d'); m.openAdmin(); return; }
+  if (h === 'admin') { const m = await import('./admin.js?v=20261113e'); m.openAdmin(); return; }
   let m = h.match(/^s-([a-z0-9]{4,16})(?:-g-(.+))?$/);
   if (m) {
     S.me = store.get('gallery-me');
@@ -146,8 +146,9 @@ async function fade(fn) { const f = $('#fade'); f.classList.add('on'); await new
 
 async function ensureViewer() {
   if (S.viewer) return S.viewer;
-  const { Gallery3D } = await import('./gallery3d.js?v=20261113d');
-  S.viewer = new Gallery3D($('#three-host'), { onArt: (a) => openModal(S.hallArts.findIndex((x) => x.id === a.id)), onEnterHall: (h) => enterHall(h), onExitHall: () => exitHall(), onRoom: (k, n, counts) => updateRoomChip(k, n, counts) });
+  const { Gallery3D } = await import('./gallery3d.js?v=20261113e');
+  S.viewer = new Gallery3D($('#three-host'), { onArt: (a) => openModal(S.hallArts.findIndex((x) => x.id === a.id)), onEnterHall: (h) => enterHall(h), onExitHall: () => exitHall(), onRoom: (k, n, counts) => updateRoomChip(k, n, counts), onSeen: (a) => markSeen(a) });
+  setupMinimap();
   setupHudPanels();
   setupJoystick();
   $('#btn-prev').onclick = () => S.viewer.step(-1);
@@ -168,8 +169,13 @@ async function enter3D() {
   await fade(async () => {
     await ensureFonts(gallery.title + gallery.subtitle + gallery.edition + halls.map((h) => h.name).join(''));
     const counts = {}; artworks.forEach((a) => (counts[a.hall_id] = (counts[a.hall_id] || 0) + 1));
-    await v.loadLobby(gallery, halls, counts); S.hall = null;
-    $('#hud-nav').classList.add('hidden'); $('#hud-room').classList.add('hidden'); closePanels(); updateSunChip();
+    let rs = []; try { rs = await src.reactions(artworks.map((a) => a.id)); } catch (e) {}
+    S.reactions = {}; rs.forEach((r) => (S.reactions[r.artwork_id] ||= []).push(r));
+    const popular = artworks.filter((a) => (S.reactions[a.id] || []).length).sort((a, b) => S.reactions[b.id].length - S.reactions[a.id].length).slice(0, 6);
+    await loadSeen();
+    await v.loadLobby(gallery, halls, counts, popular, S.reactions, media); S.hall = null;
+    S.hallArts = v.arts.map((e) => e.art); v.markSeen([...S.seen]); updateSteps();
+    $('#hud-nav').classList.toggle('hidden', !S.hallArts?.length); $('#hud-room').classList.add('hidden'); closePanels(); updateSunChip();
   });
   hint(halls.length > 1 ? '揀一條通道行入去，或者直接撳門口' : '行入門口，或者直接撳門口');
 }
@@ -181,10 +187,11 @@ async function enterHall(hall) {
   await fade(async () => {
     let rs = [];
     try { rs = await src.reactions(arts.map((a) => a.id)); } catch (e) {}
-    S.reactions = {}; rs.forEach((r) => (S.reactions[r.artwork_id] ||= []).push(r));
+    arts.forEach((a) => (S.reactions[a.id] = [])); rs.forEach((r) => S.reactions[r.artwork_id].push(r));
     await ensureFonts(arts.map((a) => (a.title || '') + (a.student_name || '') + (a.student_class || '')).join('') + hall.name + S.cur.gallery.title);
     await v.loadHall(S.cur.gallery, hall, arts, S.reactions, media);
     S.hallArts = v.arts.map((e) => e.art); // 跟展廳次序
+    v.markSeen([...S.seen]);
     $('#hud-nav').classList.toggle('hidden', !arts.length); updateSunChip();
   });
   hint(arts.length ? '撳「›」跳去下一件，撳作品可以睇近啲同送讚' : '呢度暫時未有作品');
@@ -199,7 +206,7 @@ async function exitHall() {
 
 // ---------- 展室選單同陽光 ----------
 let roomState = { k: 0, n: 1, counts: [] }, sunTimer;
-function closePanels() { $('#room-menu').classList.add('hidden'); $('#sun-panel').classList.add('hidden'); clearInterval(sunTimer); }
+function closePanels() { $('#room-menu').classList.add('hidden'); $('#sun-panel').classList.add('hidden'); $('#steps-panel').classList.add('hidden'); clearInterval(sunTimer); }
 function updateRoomChip(k, n, counts) {
   roomState = { k, n, counts };
   const chip = $('#hud-room'); chip.classList.toggle('hidden', n < 2); chip.textContent = `🚪 展室 ${k + 1}/${n} ▾`;
@@ -223,6 +230,72 @@ function setupHudPanels() {
   $$('.sun-presets button').forEach((b) => (b.onclick = () => { S.viewer.setSunOverride(Number(b.dataset.h)); $('#sun-range').value = b.dataset.h; lab(); }));
   $('#sun-reset').onclick = () => { S.viewer.setSunOverride(null); lab(); };
   $('#three-host').addEventListener('pointerdown', closePanels);
+}
+
+// ---------- 我嘅足跡 ----------
+const doneKey = () => `gallery-done-${S.cur?.gallery.id}-${S.me?.cls}-${S.me?.no}`;
+async function loadSeen() {
+  const gid = S.cur.gallery.id, who = S.me ? `${S.me.cls}|${S.me.no}` : '';
+  if (S.seenGid === gid + who) return;
+  S.seenGid = gid + who; S.seen = new Set();
+  if (S.code && S.me) { try { (await db.linkMySeen(S.code, gid, S.me)).forEach((id) => S.seen.add(id)); } catch (e) {} }
+}
+function markSeen(a) {
+  if (!a || S.seen.has(a.id)) return;
+  S.seen.add(a.id); S.viewer?.markSeen([a.id]); updateSteps();
+  if (S.code && S.me) db.linkMarkSeen(S.code, a.id, S.me).catch(() => {});
+  const total = S.cur.artworks.length;
+  if (total && S.cur.artworks.every((x) => S.seen.has(x.id)) && !store.get(doneKey())) {
+    store.set(doneKey(), 1);
+    const praised = S.cur.artworks.filter((x) => (S.reactions[x.id] || []).some((r) => r.from_class === S.me?.cls && String(r.from_no) === String(S.me?.no))).length;
+    $('#done-msg').innerHTML = `你參觀晒「${esc(S.cur.gallery.title)}」全部 ${total} 件作品${praised ? `，仲讚咗 ${praised} 位同學` : ''}！`;
+    $('#done').classList.remove('hidden');
+  }
+}
+$('#done-ok').onclick = () => $('#done').classList.add('hidden');
+function updateSteps() {
+  const chip = $('#hud-steps'); if (!S.cur) return;
+  const total = S.cur.artworks.length; const seen = S.cur.artworks.filter((a) => S.seen.has(a.id)).length;
+  chip.classList.toggle('hidden', !total); chip.textContent = `${seen === total ? '🏅' : '👣'} ${seen}/${total}`;
+  if (!$('#steps-panel').classList.contains('hidden')) renderSteps();
+}
+function renderSteps() {
+  const p = $('#steps-panel'); const { halls, artworks } = S.cur;
+  const mine = (a) => (S.reactions[a.id] || []).some((r) => r.from_class === S.me?.cls && String(r.from_no) === String(S.me?.no));
+  const seen = artworks.filter((a) => S.seen.has(a.id)).length, praised = artworks.filter(mine).length;
+  p.innerHTML = `<h4>我嘅足跡</h4><div class="pbar"><i style="width:${artworks.length ? (seen / artworks.length) * 100 : 0}%"></i></div>
+    <div class="row-p">已參觀<span>${seen} / ${artworks.length} 件</span></div><div class="row-p">已送讚<span>${praised} 件</span></div>
+    ${halls.map((h) => { const as = artworks.filter((a) => a.hall_id === h.id); const k = as.filter((a) => S.seen.has(a.id)).length; return `<div class="row-p">${esc(h.name)}<span>${k === as.length && as.length ? '✅ ' : ''}${k}/${as.length}</span></div>`; }).join('')}
+    <p class="muted" style="font-size:12px;margin:8px 6px 0">行近作品望一陣，或者撳入去睇，就會計做參觀咗。</p>`;
+}
+
+// ---------- 小地圖 ----------
+let mapTimer;
+function setupMinimap() {
+  const cv = $('#minimap');
+  $('#hud-steps').onclick = () => { const p = $('#steps-panel'); const open = p.classList.contains('hidden'); closePanels(); if (open) { renderSteps(); p.classList.remove('hidden'); } };
+  cv.onclick = async (e) => {
+    const st = S.viewer?.mapState(); if (!st || st.rooms.length < 2) return;
+    const r = cv.getBoundingClientRect(); const yN = (e.clientY - r.top) / r.height; const z = st.top - yN * (st.D);
+    const k = st.rooms.findIndex((rm) => z <= rm.zTop && z > rm.zTop - rm.depth); if (k >= 0 && k !== st.room) await fade(async () => S.viewer.goToRoom(k));
+  };
+  clearInterval(mapTimer); mapTimer = setInterval(drawMinimap, 200);
+}
+function drawMinimap() {
+  const cv = $('#minimap'); const st = S.viewer?.mapState?.();
+  if (!st || $('#screen-3d').classList.contains('hidden')) { cv.classList.add('hidden'); return; }
+  cv.classList.remove('hidden');
+  const pad = 8, W = 150, H = Math.round(Math.min(240, Math.max(120, (W - 2 * pad) * st.D / st.W + 2 * pad)));
+  if (cv.height !== H) cv.height = H;
+  const x = cv.getContext('2d'); x.clearRect(0, 0, W, H);
+  const sx = (W - 2 * pad) / st.W, sz = (H - 2 * pad) / st.D;
+  const X = (wx) => pad + (wx + st.W / 2) * sx, Y = (wz) => pad + (st.top - wz) * sz;
+  st.rooms.forEach((r, k) => { x.fillStyle = k === st.room ? 'rgba(217,72,15,.12)' : 'rgba(0,0,0,.03)'; x.fillRect(pad, Y(r.zTop), W - 2 * pad, r.depth * sz);
+    x.strokeStyle = '#8a8378'; x.lineWidth = 1.5; x.strokeRect(pad, Y(r.zTop), W - 2 * pad, r.depth * sz);
+    if (st.rooms.length > 1) { x.fillStyle = '#6f6a62'; x.font = '700 10px sans-serif'; x.fillText(String(k + 1), pad + 4, Y(r.zTop) + 12); } });
+  x.fillStyle = '#fff'; st.rooms.forEach((r, k) => { if (k) x.fillRect(X(-1.1), Y(r.zTop) - 2, 2.2 * sx, 4); }); x.fillRect(X(-1.1), Y(st.top) - 2, 2.2 * sx, 4);
+  st.arts.forEach((a) => { x.fillStyle = a.seen ? '#2b8a3e' : '#b9b2a6'; x.beginPath(); a.ped ? x.rect(X(a.x) - 3, Y(a.z) - 3, 6, 6) : x.arc(X(a.x), Y(a.z), 3.2, 0, 7); x.fill(); });
+  const px = X(st.x), py = Y(st.z); x.save(); x.translate(px, py); x.rotate(-st.yaw); x.fillStyle = '#d9480f'; x.beginPath(); x.moveTo(0, -7); x.lineTo(5, 5); x.lineTo(0, 2); x.lineTo(-5, 5); x.closePath(); x.fill(); x.restore();
 }
 
 // 每 15 秒睇吓有冇新讚賞
@@ -254,16 +327,20 @@ async function openModal(i) {
   const view = $('#art-view'); view.className = 'art-view'; view.innerHTML = '';
   $('#art-title').textContent = a.title ? `《${a.title}》` : '（無題）';
   $('#art-author').textContent = personLabel(a.student_class, a.student_no, a.student_name);
+  const au = $('#art-audio-el'); au.pause(); au.removeAttribute('src');
+  $('#art-audio').classList.toggle('hidden', !a.audio_path);
+  if (a.audio_path) { db.mediaUrl(a.audio_path).then((u) => { if (S.hallArts[S.modalIdx]?.id === a.id) au.src = u; }); $('#art-audio span').textContent = `🔊 聽 ${a.student_name || '作者'} 介紹自己嘅作品`; }
+  markSeen(a);
   renderPraise(a);
   const idx = S.modalIdx;
   if (a.kind === 'model') {
     view.classList.add('is-3d');
-    const { openModelView } = await import('./modal-viewer.js?v=20261113d');
+    const { openModelView } = await import('./modal-viewer.js?v=20261113e');
     if (S.modalIdx === idx) S.modalDispose = openModelView(view, db, a.model_path);
   } else if (a.kind === 'photos') {
     view.classList.add('is-3d');
     const urls = await Promise.all((a.photo_paths || []).map((p) => db.mediaUrl(p)));
-    const { openPhotoSpin } = await import('./modal-viewer.js?v=20261113d');
+    const { openPhotoSpin } = await import('./modal-viewer.js?v=20261113e');
     if (S.modalIdx === idx) S.modalDispose = openPhotoSpin(view, urls);
   } else {
     const img = document.createElement('img'); img.alt = ''; img.src = await db.mediaUrl(a.image_path); view.appendChild(img);
@@ -274,7 +351,7 @@ async function openModal(i) {
     };
   }
 }
-function closeModal() { $('#modal-art').classList.add('hidden'); S.modalIdx = -1; S.modalDispose?.(); S.modalDispose = null; }
+function closeModal() { $('#art-audio-el')?.pause(); $('#modal-art').classList.add('hidden'); S.modalIdx = -1; S.modalDispose?.(); S.modalDispose = null; }
 $('#modal-art').addEventListener('click', (e) => { if (e.target.id === 'modal-art' || e.target.closest('[data-close]')) closeModal(); });
 $('#art-prev').onclick = () => openModal(S.modalIdx - 1);
 $('#art-next').onclick = () => openModal(S.modalIdx + 1);

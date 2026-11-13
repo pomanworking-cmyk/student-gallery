@@ -1,7 +1,7 @@
 // 老師管理頁
-import { db, resizeImage } from './data.js?v=20261113d';
-import { THEMES, themeColors, stickerUrl, GRADES, gradeLabel } from './constants.js?v=20261113d';
-import { $, $$, esc, toast, confirmBox, show, personLabel, hourLabel } from './ui.js?v=20261113d';
+import { db, resizeImage } from './data.js?v=20261113e';
+import { THEMES, themeColors, stickerUrl, GRADES, gradeLabel } from './constants.js?v=20261113e';
+import { $, $$, esc, toast, confirmBox, show, personLabel, hourLabel } from './ui.js?v=20261113e';
 
 const A = { tab: 'galleries', view: 'list', gallery: null, hallId: null, roster: [], teacher: null };
 let root;
@@ -52,6 +52,7 @@ function renderShell() {
       <button class="tab" data-t="links">學生連結</button>
       <button class="tab" data-t="roster">學生名單</button>
       <button class="tab" data-t="reactions">讚賞紀錄</button>
+      <button class="tab" data-t="visits">參觀紀錄</button>
       <button class="tab" data-t="tools">空間同備份</button>
       ${t.is_owner ? '<button class="tab" data-t="teachers">老師帳戶</button>' : ''}
     </div>
@@ -70,6 +71,7 @@ function renderTab() {
   if (A.tab === 'reactions') return renderReactions(body);
   if (A.tab === 'teachers') return renderTeachers(body);
   if (A.tab === 'tools') return renderTools(body);
+  if (A.tab === 'visits') return renderVisits(body);
   if (A.view === 'edit') return renderEditor(body);
   if (A.view === 'arts') return renderArts(body);
   return renderGalleryList(body);
@@ -204,7 +206,7 @@ async function renderArts(body) {
   const ex = $('#existing');
   for (const a of arts) {
     const card = document.createElement('div'); card.className = 'art-card';
-    card.innerHTML = `<div class="thumb">${a.kind !== 'flat' && a.kind ? `<span class="kind-badge">${KIND_LABEL[a.kind]}</span>` : ''}</div>${fieldsHtml(a)}<div class="acts"><span class="status"></span><button class="btn small ghost" data-del style="color:var(--danger)">刪除</button></div>`;
+    card.innerHTML = `<div class="thumb">${a.kind !== 'flat' && a.kind ? `<span class="kind-badge">${KIND_LABEL[a.kind]}</span>` : ''}</div>${fieldsHtml(a)}<div class="rec"></div><div class="acts"><span class="status"></span><button class="btn small ghost" data-del style="color:var(--danger)">刪除</button></div>`;
     ex.appendChild(card);
     if (a.image_path) db.mediaUrl(a.image_path).then((u) => ($('.thumb', card).style.backgroundImage = `url("${u}")`));
     $$('input', card).forEach((inp) => (inp.onchange = async () => {
@@ -215,6 +217,7 @@ async function renderArts(body) {
       try { await db.updateArtwork({ id: a.id, student_class: a.student_class, student_no: a.student_no, student_name: a.student_name, title: a.title }); st.textContent = '已儲存'; st.className = 'status ok'; } catch (e) { st.textContent = '儲存失敗'; st.className = 'status err'; }
     }));
     $('[data-del]', card).onclick = async () => { if (!(await confirmBox(`刪除 ${personLabel(a.student_class, a.student_no, a.student_name)} 嘅作品？`, '刪除'))) return; await db.deleteArtwork(a); card.remove(); toast('已刪除'); };
+    audioUi($('.rec', card), a);
   }
 
   // 上傳
@@ -255,7 +258,7 @@ async function renderArts(body) {
       $('.thumb', c).style.backgroundImage = `url("${URL.createObjectURL(imgs[0])}")`;
       $('.strip', c).innerHTML = imgs.map((f) => `<img src="${URL.createObjectURL(f)}" alt="">`).join('');
     } else {
-      const { snapshotGLBFile } = await import('./modal-viewer.js?v=20261113d');
+      const { snapshotGLBFile } = await import('./modal-viewer.js?v=20261113e');
       for (const f of files) {
         if (!/\.glb$/i.test(f.name)) { toast(`「${f.name}」唔係 .glb 檔`); continue; }
         if (f.size > 48 * 1024 * 1024) { toast(`「${f.name}」太大（${(f.size / 1048576).toFixed(0)}MB），請匯出細啲嘅版本`); continue; }
@@ -454,7 +457,9 @@ async function renderTools(body) {
         送出讚數: d.reactions.filter((r) => r.from_class === s.class_name && Number(r.from_no) === s.number).length }));
       const X = window.XLSX; const wb = X.utils.book_new();
       const add = (rows, name, empty) => { const ws = X.utils.json_to_sheet(rows.length ? rows : [{ [empty]: '（未有資料）' }]); const keys = Object.keys(rows[0] || { [empty]: '' }); ws['!cols'] = keys.map((k) => ({ wch: Math.min(50, Math.max(8, k.length * 2 + 2, ...rows.slice(0, 200).map((r) => String(r[k] ?? '').length + 2))) })); X.utils.book_append_sheet(wb, ws, name); };
-      add(gals, '畫廊', '作品名稱'); add(arts, '作品', '畫廊'); add(studs, '學生', '班別'); add(reacts, '讚賞紀錄', '畫廊');
+      const vis = (d.visits || []).map((v) => { const a = aById[v.artwork_id] || {}; const g = gById[(hById[a.hall_id] || {}).gallery_id] || {}; return { 參觀者: personLabel(v.visitor_class, v.visitor_class === '老師' ? '' : v.visitor_no, v.visitor_name), 畫廊: g.title || '', 作品: a.title || '', 作者: personLabel(a.student_class, a.student_no, a.student_name), 時間: fmtTime(v.created_at) }; }).sort((x, y) => x.參觀者.localeCompare(y.參觀者) || x.時間.localeCompare(y.時間));
+      studs.forEach((st) => (st.參觀作品數 = (d.visits || []).filter((v) => v.visitor_class === st.班別 && String(v.visitor_no) === String(st.學號)).length));
+      add(gals, '畫廊', '作品名稱'); add(arts, '作品', '畫廊'); add(studs, '學生', '班別'); add(reacts, '讚賞紀錄', '畫廊'); add(vis, '參觀紀錄', '參觀者');
       const day = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Hong_Kong' });
       X.writeFile(wb, `學生作品畫廊備份-${day}.xlsx`);
       st.className = 'status ok'; st.textContent = `完成：${d.galleries.length} 個畫廊、${d.artworks.length} 件作品、${d.reactions.length} 個讚賞`;
@@ -489,4 +494,73 @@ let xlsxP;
 function loadXLSX() {
   if (window.XLSX) return Promise.resolve();
   return (xlsxP ||= new Promise((ok, bad) => { const sc = document.createElement('script'); sc.src = 'vendor/xlsx.full.min.js'; sc.onload = ok; sc.onerror = () => { xlsxP = null; bad(new Error('載入唔到 Excel 工具')); }; document.head.appendChild(sc); }));
+}
+
+// ---------- 錄音導賞 ----------
+function audioUi(box, a) {
+  let rec = null, chunks = [], timer = null, blob = null, stream = null;
+  const stop = () => { clearInterval(timer); try { rec?.state === 'recording' && rec.stop(); } catch (e) {} stream?.getTracks().forEach((t) => t.stop()); stream = null; };
+  const idle = async () => {
+    stop(); blob = null;
+    const has = !!a.audio_path; const u = has ? await db.mediaUrl(a.audio_path) : '';
+    box.innerHTML = `${has ? `<audio controls preload="none" src="${esc(u)}"></audio>` : ''}
+      <button class="btn small ghost" data-r>🎙 ${has ? '重錄' : '錄音介紹'}</button>
+      <label class="btn small ghost" style="cursor:pointer">📁 上載錄音<input type="file" accept="audio/*" hidden data-f></label>
+      ${has ? '<button class="btn small ghost" data-x style="color:var(--danger)">刪除錄音</button>' : ''}`;
+    $('[data-r]', box).onclick = start;
+    $('[data-f]', box).onchange = (e) => { const f = e.target.files[0]; if (!f) return; if (f.size > 8 * 1024 * 1024) return toast('錄音檔太大（最多 8MB）'); blob = f; review(); };
+    $('[data-x]', box)?.addEventListener('click', async () => { if (!(await confirmBox('刪除呢段錄音？', '刪除'))) return; try { await db.setAudio(a, null); a.audio_path = null; toast('已刪除錄音'); idle(); } catch (e) { toast(e.message, 5000); } });
+  };
+  const start = async () => {
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return toast('呢部機唔支援錄音，可以用「上載錄音」');
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) { return toast('用唔到咪高峰：請喺瀏覽器容許使用咪高峰'); }
+    const type = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm', 'audio/ogg'].find((t) => MediaRecorder.isTypeSupported?.(t)) || '';
+    rec = new MediaRecorder(stream, type ? { mimeType: type, audioBitsPerSecond: 48000 } : undefined); chunks = [];
+    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    rec.onstop = () => { stream?.getTracks().forEach((t) => t.stop()); stream = null; if (!chunks.length) return idle(); blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' }); review(); };
+    rec.start(); let sec = 0;
+    box.innerHTML = `<span class="t">● 錄音中 0:00 / 1:00</span><button class="btn small primary" data-s>停止</button><button class="btn small ghost" data-c>取消</button>`;
+    timer = setInterval(() => { sec++; const t = $('.t', box); if (t) t.textContent = `● 錄音中 ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')} / 1:00`; if (sec >= 60) { clearInterval(timer); rec.stop(); } }, 1000);
+    $('[data-s]', box).onclick = () => { clearInterval(timer); rec.stop(); };
+    $('[data-c]', box).onclick = () => { chunks = []; rec.onstop = null; idle(); };
+  };
+  const review = () => {
+    const u = URL.createObjectURL(blob);
+    box.innerHTML = `<audio controls src="${u}"></audio><button class="btn small primary" data-ok>儲存</button><button class="btn small ghost" data-re>重錄</button><button class="btn small ghost" data-c>取消</button><span class="status"></span>`;
+    $('[data-re]', box).onclick = start; $('[data-c]', box).onclick = idle;
+    $('[data-ok]', box).onclick = async () => { const st = $('.status', box); st.textContent = '上載中…'; try { a.audio_path = await db.setAudio(a, blob); toast('已儲存錄音'); idle(); } catch (e) { st.textContent = ''; toast(e.message, 5000); } };
+  };
+  idle();
+}
+
+// ---------- 參觀紀錄 ----------
+async function renderVisits(body) {
+  body.innerHTML = '<div class="panel"><p class="muted">載入中…</p></div>';
+  const gs = (await db.listGalleries()).filter((g) => !g.owner_id || g.owner_id === A.teacher.id || A.teacher.is_owner);
+  if (!gs.length) { body.innerHTML = '<div class="panel"><p class="muted">未有畫廊。</p></div>'; return; }
+  A.visitG = gs.find((g) => g.id === A.visitG)?.id || gs[0].id;
+  body.innerHTML = `<div class="panel"><h2>參觀紀錄</h2>
+    <p class="muted" style="margin-top:-6px;font-size:14px">學生用學生連結入去，行近作品望一陣或者撳入去睇，就會記錄為「已參觀」。</p>
+    <select id="vg" style="max-width:420px;width:100%">${gs.map((g) => `<option value="${g.id}" ${g.id === A.visitG ? 'selected' : ''}>${esc(g.edition || '')} ${esc(g.title)}（${esc(gradeLabel(g.grade))}）</option>`).join('')}</select>
+    <div id="vbody" style="margin-top:14px"><p class="muted">載入中…</p></div></div>`;
+  $('#vg').onchange = (e) => { A.visitG = e.target.value; renderVisits(body); };
+  const vb = $('#vbody');
+  try {
+    const full = await db.getGalleryFull(A.visitG); const ids = full.artworks.map((a) => a.id); const total = ids.length;
+    const [visits, reacts, roster] = await Promise.all([db.listVisits(ids), db.listReactions(ids), db.listStudents()]);
+    const g = full.gallery; const key = (c, n) => `${c}|${n}`;
+    const people = new Map();
+    const touch = (c, n, name) => { const k = key(c, n); if (!people.has(k)) people.set(k, { cls: c, no: n, name, seen: 0, praised: 0 }); return people.get(k); };
+    roster.filter((s) => (!s.owner_id || s.owner_id === A.teacher.id) && (g.grade === 'all' || String(s.class_name)[0] === String(g.grade))).forEach((s) => touch(s.class_name, String(s.number), s.name));
+    visits.forEach((v) => touch(v.visitor_class, String(v.visitor_no), v.visitor_name).seen++);
+    reacts.forEach((r) => touch(r.from_class, String(r.from_no), r.from_name).praised++);
+    const list = [...people.values()].sort((a, b) => (a.cls === '老師') - (b.cls === '老師') || a.cls.localeCompare(b.cls) || Number(a.no) - Number(b.no));
+    const done = list.filter((p) => total && p.seen >= total).length, none = list.filter((p) => !p.seen && p.cls !== '老師').length;
+    vb.innerHTML = `<div class="row" style="gap:18px;margin-bottom:10px;font-weight:700"><span>共 ${total} 件作品</span><span style="color:#2b8a3e">🏅 睇晒：${done} 人</span><span style="color:var(--danger)">未參觀：${none} 人</span></div>
+      <div style="overflow:auto"><table class="vt"><thead><tr><th>班別</th><th>學號</th><th>姓名</th><th>已參觀</th><th>送讚</th></tr></thead><tbody>
+      ${list.map((p) => `<tr class="${p.seen ? '' : 'nov'}"><td>${esc(p.cls)}</td><td>${p.cls === '老師' ? '' : esc(p.no)}</td><td>${esc(p.name)}</td><td>${total && p.seen >= total ? '🏅 ' : ''}${p.seen} / ${total}</td><td>${p.praised}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">未有紀錄</td></tr>'}
+      </tbody></table></div>`;
+  } catch (e) {
+    vb.innerHTML = e.message === 'NEED_UPDATE_4' ? '<div class="notice" style="margin:0">要先更新資料庫：喺 Supabase 嘅 SQL Editor 執行 <code>supabase/update-4.sql</code>（GitHub repo 入面有）。</div>' : `<p class="status err">${esc(e.message)}</p>`;
+  }
 }

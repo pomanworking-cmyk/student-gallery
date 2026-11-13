@@ -1,12 +1,13 @@
 // 資料層：有 Supabase 設定就用雲端，冇就用試用模式（只存喺呢部機）
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=20261113d';
-import { drawSampleArt } from './sample-art.js?v=20261113d';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=20261113e';
+import { drawSampleArt } from './sample-art.js?v=20261113e';
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Math.random().toString(36).slice(2) + Date.now().toString(36));
 const now = () => new Date().toISOString();
 export const newCode = () => { const a = 'abcdefghjkmnpqrstuvwxyz23456789'; let s = ''; const r = crypto.getRandomValues(new Uint8Array(8)); r.forEach((v) => (s += a[v % a.length])); return s; };
 
 export class DuplicateError extends Error {}
+const isMissingFn = (e) => e.code === 'PGRST202' || /Could not find the function|function .* does not exist/i.test(e.message || '');
 const isMissingColumn = (e) => e.code === 'PGRST204' || e.code === '42703' || /column .* does not exist|Could not find the .* column/i.test(e.message || '');
 
 export function galleryVisible(g, link) { return g.grade === 'all' || (link.grades || []).includes(String(g.grade)); }
@@ -141,7 +142,8 @@ class DemoBackend {
   }
   async updateArtwork(a) { const i = this.s.artworks.findIndex((x) => x.id === a.id); this.s.artworks[i] = { ...this.s.artworks[i], ...a }; this._save(); }
   async deleteArtwork(a) {
-    for (const p of [a.image_path, a.thumb_path, a.model_path, ...(a.photo_paths || [])]) if (p?.startsWith('idb:')) await idbDel(p.slice(4));
+    for (const p of [a.image_path, a.thumb_path, a.model_path, a.audio_path, ...(a.photo_paths || [])]) if (p?.startsWith('idb:')) await idbDel(p.slice(4));
+    this.s.visits = this.V.filter((v) => v.artwork_id !== a.id);
     this.s.artworks = this.s.artworks.filter((x) => x.id !== a.id); this.s.reactions = this.s.reactions.filter((r) => r.artwork_id !== a.id); this._save();
   }
   async listLinks() { return [...this.s.links]; }
@@ -155,12 +157,20 @@ class DemoBackend {
   async getSetting(k) { return this.s.settings?.[k] || ''; }
   async saveSetting(k, v) { (this.s.settings ||= {})[k] = v; this._save(); }
   async resetDemo() { memStore = seed(); this._save(); }
+  get V() { return (this.s.visits ||= []); }
+  async linkMarkSeen(code, artId, me) { if (!this._link(code)) return; if (!this.V.some((v) => v.artwork_id === artId && v.visitor_class === me.cls && v.visitor_no === String(me.no))) { this.V.push({ artwork_id: artId, visitor_class: me.cls, visitor_no: String(me.no), visitor_name: me.name, created_at: now() }); this._save(); } }
+  async linkMySeen(code, gid, me) { const f = this._full(gid); if (!f) return []; const ids = new Set(f.artworks.map((a) => a.id)); return this.V.filter((v) => ids.has(v.artwork_id) && v.visitor_class === me.cls && v.visitor_no === String(me.no)).map((v) => v.artwork_id); }
+  async listVisits(ids) { const set = new Set(ids); return this.V.filter((v) => set.has(v.artwork_id)); }
+  async setAudio(a, blob) {
+    if (a.audio_path?.startsWith('idb:')) await idbDel(a.audio_path.slice(4));
+    const p = blob ? await this._store(blob) : null; await this.updateArtwork({ id: a.id, audio_path: p }); return p;
+  }
   async storageUsage() {
     let total = 0, files = 0;
-    for (const a of this.s.artworks) for (const p of [a.image_path, a.thumb_path, a.model_path, ...(a.photo_paths || [])]) if (p?.startsWith('idb:')) { const b = await idbGet(p.slice(4)); if (b) { total += b.size; files++; } }
+    for (const a of this.s.artworks) for (const p of [a.image_path, a.thumb_path, a.model_path, a.audio_path, ...(a.photo_paths || [])]) if (p?.startsWith('idb:')) { const b = await idbGet(p.slice(4)); if (b) { total += b.size; files++; } }
     return { total_bytes: total, my_bytes: total, files };
   }
-  async backupData() { return { galleries: this.s.galleries, halls: this.s.halls, artworks: this.s.artworks, reactions: this.s.reactions, students: this.s.students }; }
+  async backupData() { return { galleries: this.s.galleries, halls: this.s.halls, artworks: this.s.artworks, reactions: this.s.reactions, students: this.s.students, visits: this.V }; }
   async setThumb(a, blob) { const p = await this._store(blob); await this.updateArtwork({ id: a.id, thumb_path: p }); return p; }
   // ---- 媒體 ----
   _cache = new Map();
@@ -169,13 +179,13 @@ class DemoBackend {
     if (this._cache.has(p)) return this._cache.get(p);
     let url = '';
     if (p.startsWith('gen:')) url = drawSampleArt(Number(p.slice(4)));
-    else if (p.startsWith('genview:')) { const [, s, i] = p.split(':'); const { renderSampleViews } = await import('./sample-model.js?v=20261113d'); const views = renderSampleViews(Number(s)); views.forEach((v, j) => this._cache.set(`genview:${s}:${j}`, v)); url = views[Number(i)]; }
+    else if (p.startsWith('genview:')) { const [, s, i] = p.split(':'); const { renderSampleViews } = await import('./sample-model.js?v=20261113e'); const views = renderSampleViews(Number(s)); views.forEach((v, j) => this._cache.set(`genview:${s}:${j}`, v)); url = views[Number(i)]; }
     else if (p.startsWith('idb:')) { const b = await idbGet(p.slice(4)); url = b ? URL.createObjectURL(b) : drawSampleArt(1); }
     else url = p;
     this._cache.set(p, url); return url;
   }
   async loadModel(p) {
-    if (p.startsWith('genmodel:')) { const { buildSampleModel } = await import('./sample-model.js?v=20261113d'); return { object: buildSampleModel(Number(p.slice(9))) }; }
+    if (p.startsWith('genmodel:')) { const { buildSampleModel } = await import('./sample-model.js?v=20261113e'); return { object: buildSampleModel(Number(p.slice(9))) }; }
     const b = await idbGet(p.slice(4)); if (!b) throw new Error('搵唔到模型檔'); return { buffer: await b.arrayBuffer() };
   }
 }
@@ -202,6 +212,21 @@ class CloudBackend {
   }
   async linkLookupStudent(code, cls, no) { return this._rpc('link_lookup_student', { p_code: code, p_class: cls, p_no: Number(no) }); }
   async linkClasses(code) { return (await this._rpc('link_classes', { p_code: code })) || []; }
+  async linkMarkSeen(code, artId, me) { const { error } = await this.sb.rpc('link_mark_seen', { p_code: code, p_artwork: artId, p_class: me.cls, p_no: String(me.no), p_name: me.name }); if (error && !isMissingFn(error)) throw error; }
+  async linkMySeen(code, gid, me) { const { data, error } = await this.sb.rpc('link_my_seen', { p_code: code, p_gallery: gid, p_class: me.cls, p_no: String(me.no) }); if (error) { if (isMissingFn(error)) return []; throw error; } return data || []; }
+  async listVisits(ids) {
+    const out = [];
+    for (let i = 0; i < ids.length; i += 100) { const { data, error } = await this.sb.from('visits').select('*').in('artwork_id', ids.slice(i, i + 100)); if (error) { if (/visits/.test(error.message)) throw new Error('NEED_UPDATE_4'); throw error; } out.push(...data); }
+    return out;
+  }
+  async setAudio(a, blob) {
+    let path = null;
+    if (blob) { const t = blob.type || 'audio/webm'; const ext = t.includes('mp4') || t.includes('m4a') || t.includes('aac') ? 'm4a' : t.includes('ogg') ? 'ogg' : t.includes('mpeg') ? 'mp3' : t.includes('wav') ? 'wav' : 'webm'; path = await this._upload(blob, a.hall_id, ext, t); }
+    const { error } = await this.sb.from('artworks').update({ audio_path: path }).eq('id', a.id);
+    if (error) { if (path) await this.sb.storage.from('artworks').remove([path]); if (isMissingColumn(error)) throw new Error('資料庫要先更新：請喺 Supabase 嘅 SQL Editor 執行 supabase/update-4.sql'); throw error; }
+    if (a.audio_path) await this.sb.storage.from('artworks').remove([a.audio_path]);
+    return path;
+  }
   // ---- 老師 ----
   async getTeacher() {
     const { data } = await this.sb.auth.getUser(); if (!data?.user) return null;
@@ -241,7 +266,7 @@ class CloudBackend {
     if (res.error && isMissingColumn(res.error)) throw new Error('資料庫要先更新：請喺 Supabase 嘅 SQL Editor 執行 supabase/update-2.sql，然後再儲存');
     return this._chk(res);
   }
-  async _removePaths(arts) { const ps = arts.flatMap((a) => [a.image_path, a.thumb_path, a.model_path, ...(a.photo_paths || [])]).filter(Boolean); for (let i = 0; i < ps.length; i += 100) await this.sb.storage.from('artworks').remove(ps.slice(i, i + 100)); }
+  async _removePaths(arts) { const ps = arts.flatMap((a) => [a.image_path, a.thumb_path, a.model_path, a.audio_path, ...(a.photo_paths || [])]).filter(Boolean); for (let i = 0; i < ps.length; i += 100) await this.sb.storage.from('artworks').remove(ps.slice(i, i + 100)); }
   async deleteGallery(id) { const f = await this.getGalleryFull(id); await this._removePaths(f?.artworks || []); this._chk(await this.sb.from('galleries').delete().eq('id', id)); }
   async saveHall(h) { return this._chk(await this.sb.from('halls').upsert(h).select().single()); }
   async deleteHall(id) { await this._removePaths(this._chk(await this.sb.from('artworks').select('*').eq('hall_id', id))); this._chk(await this.sb.from('halls').delete().eq('id', id)); }
@@ -273,7 +298,8 @@ class CloudBackend {
   async _all(table, sel = '*') { const out = []; for (let i = 0; ; i += 1000) { const rows = this._chk(await this.sb.from(table).select(sel).range(i, i + 999)); out.push(...rows); if (rows.length < 1000) return out; } }
   async backupData() {
     const [galleries, halls, artworks, reactions, students] = await Promise.all(['galleries', 'halls', 'artworks', 'reactions', 'students'].map((t) => this._all(t)));
-    return { galleries, halls, artworks, reactions, students };
+    let visits = []; try { visits = await this._all('visits'); } catch (e) {}
+    return { galleries, halls, artworks, reactions, students, visits };
   }
   async setThumb(a, blob) {
     const path = await this._upload(blob, a.hall_id, 'jpg', 'image/jpeg');
