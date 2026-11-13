@@ -57,6 +57,9 @@ create table if not exists galleries (
   created_at timestamptz not null default now()
 );
 
+alter table galleries add column if not exists room_size int not null default 20;   -- 每間展室最多幾多件作品（0 = 唔分房）
+alter table galleries add column if not exists light jsonb not null default '{}'::jsonb; -- 陽光設定
+
 create table if not exists halls (
   id uuid primary key default gen_random_uuid(),
   gallery_id uuid not null references galleries(id) on delete cascade,
@@ -78,6 +81,8 @@ create table if not exists artworks (
   sort int not null default 0,
   created_at timestamptz not null default now()
 );
+
+alter table artworks add column if not exists thumb_path text;   -- 展廳用嘅細預覽圖
 
 create table if not exists students (
   owner_id uuid not null default auth.uid() references teachers(id) on delete cascade,

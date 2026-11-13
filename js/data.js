@@ -1,12 +1,13 @@
 // 資料層：有 Supabase 設定就用雲端，冇就用試用模式（只存喺呢部機）
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=20261113a';
-import { drawSampleArt } from './sample-art.js?v=20261113a';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=20261113b';
+import { drawSampleArt } from './sample-art.js?v=20261113b';
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Math.random().toString(36).slice(2) + Date.now().toString(36));
 const now = () => new Date().toISOString();
 export const newCode = () => { const a = 'abcdefghjkmnpqrstuvwxyz23456789'; let s = ''; const r = crypto.getRandomValues(new Uint8Array(8)); r.forEach((v) => (s += a[v % a.length])); return s; };
 
 export class DuplicateError extends Error {}
+const isMissingColumn = (e) => e.code === 'PGRST204' || e.code === '42703' || /column .* does not exist|Could not find the .* column/i.test(e.message || '');
 
 export function galleryVisible(g, link) { return g.grade === 'all' || (link.grades || []).includes(String(g.grade)); }
 export function classInGrades(cls, grades) { const c = String(cls || '')[0]; return !/[0-9]/.test(c) || grades.includes(c); }
@@ -25,7 +26,7 @@ export async function resizeImage(file, max = 2000) {
 }
 
 // ================= 試用模式 =================
-const LS_KEY = 'student-gallery-demo-v2';
+const LS_KEY = 'student-gallery-demo-v3';
 let memStore = null;
 const memImages = new Map();
 function idb() {
@@ -45,9 +46,9 @@ async function idbDel(key) { memImages.delete(key); try { (await idb()).transact
 
 const DEMO_T = 'demo-teacher';
 function seed() {
-  const g1 = { id: 'demo-city', owner_id: DEMO_T, title: '我的夢想城市', edition: '第3屆', subtitle: '四年級視藝科作品展', grade: '4', theme: 'kids', colors: {}, created_at: now(), sort: 0 };
-  const g3 = { id: 'demo-clay', owner_id: DEMO_T, title: '黏土小宇宙', edition: '第1屆', subtitle: '四年級立體創作', grade: '4', theme: 'minimal', colors: {}, created_at: now(), sort: 1 };
-  const g2 = { id: 'demo-color', owner_id: DEMO_T, title: '色彩的旋律', edition: '第1屆', subtitle: '五年級 · 5C', grade: '5', theme: 'colorful', colors: {}, created_at: now(), sort: 2 };
+  const g1 = { id: 'demo-city', owner_id: DEMO_T, title: '我的夢想城市', edition: '第3屆', subtitle: '四年級視藝科作品展', grade: '4', theme: 'kids', colors: {}, room_size: 4, light: { mode: 'off' }, created_at: now(), sort: 0 };
+  const g3 = { id: 'demo-clay', owner_id: DEMO_T, title: '黏土小宇宙', edition: '第1屆', subtitle: '四年級立體創作', grade: '4', theme: 'minimal', colors: {}, room_size: 20, light: { mode: 'fixed', hour: 15, student: true }, created_at: now(), sort: 1 };
+  const g2 = { id: 'demo-color', owner_id: DEMO_T, title: '色彩的旋律', edition: '第1屆', subtitle: '五年級 · 5C', grade: '5', theme: 'colorful', colors: {}, room_size: 20, light: { mode: 'cycle', student: false }, created_at: now(), sort: 2 };
   const halls = [
     { id: 'demo-4a', gallery_id: g1.id, name: '4A', sort: 0 }, { id: 'demo-4b', gallery_id: g1.id, name: '4B', sort: 1 },
     { id: 'demo-4all', gallery_id: g3.id, name: '四年級全級', sort: 0 },
@@ -133,14 +134,14 @@ class DemoBackend {
   async _store(blob) { const id = uid(); await idbPut(id, blob); return 'idb:' + id; }
   async addArtwork({ kind, files, cover }, meta) {
     const row = { ...meta, kind, id: uid(), photo_paths: [], model_path: null, created_at: now() };
-    if (kind === 'flat') row.image_path = await this._store(await resizeImage(files[0]));
+    if (kind === 'flat') { row.image_path = await this._store(await resizeImage(files[0])); row.thumb_path = await this._store(await resizeImage(files[0], 800)); }
     else if (kind === 'photos') { for (const f of files) row.photo_paths.push(await this._store(await resizeImage(f, 1600))); row.image_path = row.photo_paths[0]; }
     else { row.model_path = await this._store(files[0]); row.image_path = cover ? await this._store(await resizeImage(cover, 1200)) : null; }
     this.s.artworks.push(row); this._save(); return row;
   }
   async updateArtwork(a) { const i = this.s.artworks.findIndex((x) => x.id === a.id); this.s.artworks[i] = { ...this.s.artworks[i], ...a }; this._save(); }
   async deleteArtwork(a) {
-    for (const p of [a.image_path, a.model_path, ...(a.photo_paths || [])]) if (p?.startsWith('idb:')) await idbDel(p.slice(4));
+    for (const p of [a.image_path, a.thumb_path, a.model_path, ...(a.photo_paths || [])]) if (p?.startsWith('idb:')) await idbDel(p.slice(4));
     this.s.artworks = this.s.artworks.filter((x) => x.id !== a.id); this.s.reactions = this.s.reactions.filter((r) => r.artwork_id !== a.id); this._save();
   }
   async listLinks() { return [...this.s.links]; }
@@ -161,13 +162,13 @@ class DemoBackend {
     if (this._cache.has(p)) return this._cache.get(p);
     let url = '';
     if (p.startsWith('gen:')) url = drawSampleArt(Number(p.slice(4)));
-    else if (p.startsWith('genview:')) { const [, s, i] = p.split(':'); const { renderSampleViews } = await import('./sample-model.js?v=20261113a'); const views = renderSampleViews(Number(s)); views.forEach((v, j) => this._cache.set(`genview:${s}:${j}`, v)); url = views[Number(i)]; }
+    else if (p.startsWith('genview:')) { const [, s, i] = p.split(':'); const { renderSampleViews } = await import('./sample-model.js?v=20261113b'); const views = renderSampleViews(Number(s)); views.forEach((v, j) => this._cache.set(`genview:${s}:${j}`, v)); url = views[Number(i)]; }
     else if (p.startsWith('idb:')) { const b = await idbGet(p.slice(4)); url = b ? URL.createObjectURL(b) : drawSampleArt(1); }
     else url = p;
     this._cache.set(p, url); return url;
   }
   async loadModel(p) {
-    if (p.startsWith('genmodel:')) { const { buildSampleModel } = await import('./sample-model.js?v=20261113a'); return { object: buildSampleModel(Number(p.slice(9))) }; }
+    if (p.startsWith('genmodel:')) { const { buildSampleModel } = await import('./sample-model.js?v=20261113b'); return { object: buildSampleModel(Number(p.slice(9))) }; }
     const b = await idbGet(p.slice(4)); if (!b) throw new Error('搵唔到模型檔'); return { buffer: await b.arrayBuffer() };
   }
 }
@@ -227,8 +228,13 @@ class CloudBackend {
     this._chk(await this.sb.from('students').delete().eq('owner_id', me).eq('class_name', cls));
     if (rows.length) this._chk(await this.sb.from('students').insert(rows.map((r) => ({ owner_id: me, class_name: cls, number: r.number, name: r.name }))));
   }
-  async saveGallery(g) { const { halls, teachers, ...row } = g; return this._chk(await this.sb.from('galleries').upsert(row).select().single()); }
-  async _removePaths(arts) { const ps = arts.flatMap((a) => [a.image_path, a.model_path, ...(a.photo_paths || [])]).filter(Boolean); for (let i = 0; i < ps.length; i += 100) await this.sb.storage.from('artworks').remove(ps.slice(i, i + 100)); }
+  async saveGallery(g) {
+    const { halls, teachers, ...row } = g;
+    const res = await this.sb.from('galleries').upsert(row).select().single();
+    if (res.error && isMissingColumn(res.error)) throw new Error('資料庫要先更新：請喺 Supabase 嘅 SQL Editor 執行 supabase/update-2.sql，然後再儲存');
+    return this._chk(res);
+  }
+  async _removePaths(arts) { const ps = arts.flatMap((a) => [a.image_path, a.thumb_path, a.model_path, ...(a.photo_paths || [])]).filter(Boolean); for (let i = 0; i < ps.length; i += 100) await this.sb.storage.from('artworks').remove(ps.slice(i, i + 100)); }
   async deleteGallery(id) { const f = await this.getGalleryFull(id); await this._removePaths(f?.artworks || []); this._chk(await this.sb.from('galleries').delete().eq('id', id)); }
   async saveHall(h) { return this._chk(await this.sb.from('halls').upsert(h).select().single()); }
   async deleteHall(id) { await this._removePaths(this._chk(await this.sb.from('artworks').select('*').eq('hall_id', id))); this._chk(await this.sb.from('halls').delete().eq('id', id)); }
@@ -239,10 +245,15 @@ class CloudBackend {
   }
   async addArtwork({ kind, files, cover }, meta) {
     const row = { ...meta, kind, photo_paths: [], model_path: null };
-    if (kind === 'flat') row.image_path = await this._upload(await resizeImage(files[0]), meta.hall_id, 'jpg', 'image/jpeg');
+    if (kind === 'flat') { row.image_path = await this._upload(await resizeImage(files[0]), meta.hall_id, 'jpg', 'image/jpeg'); row.thumb_path = await this._upload(await resizeImage(files[0], 800), meta.hall_id, 'jpg', 'image/jpeg'); }
     else if (kind === 'photos') { for (const f of files) row.photo_paths.push(await this._upload(await resizeImage(f, 1600), meta.hall_id, 'jpg', 'image/jpeg')); row.image_path = row.photo_paths[0]; }
     else { row.model_path = await this._upload(files[0], meta.hall_id, 'glb', 'model/gltf-binary'); row.image_path = cover ? await this._upload(await resizeImage(cover, 1200), meta.hall_id, 'jpg', 'image/jpeg') : null; }
-    return this._chk(await this.sb.from('artworks').insert(row).select().single());
+    let res = await this.sb.from('artworks').insert(row).select().single();
+    if (res.error && isMissingColumn(res.error) && row.thumb_path) { // 資料庫未更新：唔用預覽圖都照樣上載
+      await this.sb.storage.from('artworks').remove([row.thumb_path]); const { thumb_path, ...rest } = row;
+      res = await this.sb.from('artworks').insert(rest).select().single();
+    }
+    return this._chk(res);
   }
   async updateArtwork(a) { const { id, ...rest } = a; this._chk(await this.sb.from('artworks').update(rest).eq('id', id)); }
   async deleteArtwork(a) { await this._removePaths([a]); this._chk(await this.sb.from('artworks').delete().eq('id', a.id)); }

@@ -1,7 +1,7 @@
 // 老師管理頁
-import { db } from './data.js?v=20261113a';
-import { THEMES, themeColors, stickerUrl, GRADES, gradeLabel } from './constants.js?v=20261113a';
-import { $, $$, esc, toast, confirmBox, show, personLabel } from './ui.js?v=20261113a';
+import { db } from './data.js?v=20261113b';
+import { THEMES, themeColors, stickerUrl, GRADES, gradeLabel } from './constants.js?v=20261113b';
+import { $, $$, esc, toast, confirmBox, show, personLabel, hourLabel } from './ui.js?v=20261113b';
 
 const A = { tab: 'galleries', view: 'list', gallery: null, hallId: null, roster: [], teacher: null };
 let root;
@@ -80,13 +80,13 @@ async function renderGalleryList(body) {
   const mine = gs.filter((g) => !g.owner_id || g.owner_id === A.teacher.id);
   const others = gs.filter((g) => g.owner_id && g.owner_id !== A.teacher.id);
   const item = (g) => `<div class="list-item"><div class="grow"><div class="t">${esc(g.edition || '')} ${esc(g.title)} <span class="chip">${esc(gradeLabel(g.grade) || '未設年級')}</span></div>
-      <div class="s">${g.teachers?.name ? esc(g.teachers.name) + ' · ' : ''}${esc(THEMES[g.theme]?.name || '')} · 通道：${g.halls.map((h) => `${esc(h.name)}（${h.count || 0}）`).join('、') || '（未有）'}</div></div>
+      <div class="s">${g.teachers?.name ? esc(g.teachers.name) + ' · ' : ''}${esc(THEMES[g.theme]?.name || '')} · ${g.room_size === 0 ? '唔分房' : `每室 ${g.room_size ?? 20} 件`}${g.light?.mode && g.light.mode !== 'off' ? ' · ☀️ 陽光' : ''} · 通道：${g.halls.map((h) => `${esc(h.name)}（${h.count || 0}）`).join('、') || '（未有）'}</div></div>
       <div class="row"><button class="btn small primary" data-arts="${g.id}">上傳／管理作品</button><button class="btn small ghost" data-edit="${g.id}">設定</button>
       <a class="btn small ghost" href="#t-g-${g.id}">參觀</a><button class="btn small ghost" data-del="${g.id}" style="color:var(--danger)">刪除</button></div></div>`;
   body.innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between;margin-bottom:6px"><h2 style="margin:0">我嘅畫廊</h2><button class="btn primary" id="new-g">＋ 新增畫廊</button></div>
     ${mine.length ? mine.map(item).join('') : '<p class="muted">未有畫廊，撳「新增畫廊」開始。</p>'}</div>
     ${others.length ? `<div class="panel"><h2>其他老師嘅畫廊</h2>${others.map(item).join('')}</div>` : ''}`;
-  $('#new-g').onclick = () => { A.gallery = { title: '', edition: '', subtitle: '', grade: '4', theme: 'minimal', colors: {}, halls: [] }; A.view = 'edit'; renderTab(); };
+  $('#new-g').onclick = () => { A.gallery = { title: '', edition: '', subtitle: '', grade: '4', theme: 'minimal', colors: {}, room_size: 20, light: { mode: 'off', hour: 15, student: false }, halls: [] }; A.view = 'edit'; renderTab(); };
   $$('[data-edit]', body).forEach((b) => (b.onclick = () => { A.gallery = structuredClone(gs.find((g) => g.id === b.dataset.edit)); A.view = 'edit'; renderTab(); }));
   $$('[data-arts]', body).forEach((b) => (b.onclick = () => { A.gallery = gs.find((g) => g.id === b.dataset.arts); A.hallId = A.gallery.halls[0]?.id; A.view = 'arts'; renderTab(); }));
   $$('[data-del]', body).forEach((b) => (b.onclick = async () => {
@@ -99,6 +99,7 @@ async function renderGalleryList(body) {
 // ---------- 畫廊設定 ----------
 function renderEditor(body) {
   const g = A.gallery; g.colors ||= {};
+  const light = { mode: 'off', hour: 15, student: false, ...(g.light || {}) };
   const cur = () => themeColors(g);
   body.innerHTML = `<div class="panel"><h2>${g.id ? '畫廊設定' : '新增畫廊'}</h2>
     <div class="row" style="margin-bottom:12px">
@@ -109,12 +110,25 @@ function renderEditor(body) {
     <label class="field" style="margin-bottom:16px">副題<small>例如「四年級視藝科作品展」</small><input id="f-sub" value="${esc(g.subtitle)}" maxlength="40"></label>
     <label class="field" style="margin-bottom:16px">通道（班別）<small>用逗號分開，每個名都會變成門口一條通道。全級一齊展覽可以寫「四年級全級」，或者分開寫「4A, 4B, 4C」。</small>
       <input id="f-halls" value="${esc((g.halls || []).map((h) => h.name).join(', '))}" placeholder="4A, 4B, 4C"></label>
+    <div class="row" style="margin-bottom:16px;align-items:flex-start">
+      <label class="field" style="max-width:260px">每間展室最多幾多件作品<small>超過呢個數就會自動分成相連嘅展室。填 0 即係唔分房，全部放喺一條長廊。</small>
+        <input id="f-room" type="number" inputmode="numeric" min="0" max="60" value="${esc(g.room_size ?? 20)}"></label>
+      <div class="field">陽光模式<small>天花會開天窗，陽光同影會跟時間變化。</small>
+        <select id="f-light">${[['off', '關閉（普通室內燈光）'], ['fixed', '固定時間'], ['real', '跟香港而家嘅真實時間'], ['cycle', '一日循環（朝早到夜晚慢慢變）']].map(([v, n]) => `<option value="${v}" ${light.mode === v ? 'selected' : ''}>${n}</option>`).join('')}</select>
+        <div id="f-hour-wrap" style="margin-top:8px"><input id="f-hour" type="range" min="6" max="21" step="0.5" value="${light.hour}" style="width:100%;padding:0"><div id="f-hour-lab" style="font-weight:400"></div></div>
+        <label id="f-lstu-wrap" style="display:flex;gap:8px;align-items:center;font-weight:400;margin-top:8px"><input id="f-lstu" type="checkbox" style="width:auto" ${light.student ? 'checked' : ''}>容許學生自己調校陽光時間</label>
+      </div>
+    </div>
     <div class="field" style="margin-bottom:8px">風格</div>
     <div class="theme-pick">${Object.entries(THEMES).map(([k, t]) => `<button class="theme-opt ${g.theme === k ? 'on' : ''}" data-th="${k}"><div class="sw"><i style="background:${t.bg}"></i><i style="background:${t.wall}"></i><i style="background:${t.floor}"></i><i style="background:${t.accent}"></i></div><b>${t.name}</b><small>${t.desc}</small></button>`).join('')}</div>
     <div class="row" style="justify-content:space-between;margin:16px 0 8px"><div class="field" style="flex:none">自訂顏色</div><button class="btn small ghost" id="reset-col">用返風格預設</button></div>
     <div class="colors">${[['wall', '牆身'], ['floor', '地板'], ['bg', '背景'], ['accent', '重點色']].map(([k, n]) => `<label>${n}<input type="color" data-c="${k}" value="${cur()[k]}"></label>`).join('')}</div>
     <div class="row" style="justify-content:flex-end;margin-top:20px"><button class="btn ghost" id="cancel">取消</button><button class="btn primary" id="save">儲存</button></div></div>`;
-  const sync = () => { g.title = $('#f-title').value.trim(); g.edition = $('#f-ed').value.trim(); g.subtitle = $('#f-sub').value.trim(); g.grade = $('#f-grade').value; g._hallsText = $('#f-halls').value; };
+  const sync = () => { g.title = $('#f-title').value.trim(); g.edition = $('#f-ed').value.trim(); g.subtitle = $('#f-sub').value.trim(); g.grade = $('#f-grade').value; g._hallsText = $('#f-halls').value;
+    g.room_size = Math.max(0, Math.min(60, Math.floor(Number($('#f-room').value) || 0)));
+    g.light = { mode: $('#f-light').value, hour: Number($('#f-hour').value), student: $('#f-lstu').checked }; };
+  const lightUi = () => { const m = $('#f-light').value; $('#f-hour-wrap').style.display = m === 'fixed' ? '' : 'none'; $('#f-lstu-wrap').style.display = m === 'off' ? 'none' : 'flex'; $('#f-hour-lab').textContent = hourLabel(Number($('#f-hour').value)); };
+  $('#f-light').onchange = lightUi; $('#f-hour').oninput = lightUi; lightUi();
   if (g._hallsText !== undefined) $('#f-halls').value = g._hallsText;
   $$('.theme-opt', body).forEach((b) => (b.onclick = () => { sync(); g.theme = b.dataset.th; g.colors = {}; renderEditor(body); }));
   $$('[data-c]', body).forEach((i) => (i.oninput = () => (g.colors[i.dataset.c] = i.value)));
@@ -239,7 +253,7 @@ async function renderArts(body) {
       $('.thumb', c).style.backgroundImage = `url("${URL.createObjectURL(imgs[0])}")`;
       $('.strip', c).innerHTML = imgs.map((f) => `<img src="${URL.createObjectURL(f)}" alt="">`).join('');
     } else {
-      const { snapshotGLBFile } = await import('./modal-viewer.js?v=20261113a');
+      const { snapshotGLBFile } = await import('./modal-viewer.js?v=20261113b');
       for (const f of files) {
         if (!/\.glb$/i.test(f.name)) { toast(`「${f.name}」唔係 .glb 檔`); continue; }
         if (f.size > 48 * 1024 * 1024) { toast(`「${f.name}」太大（${(f.size / 1048576).toFixed(0)}MB），請匯出細啲嘅版本`); continue; }

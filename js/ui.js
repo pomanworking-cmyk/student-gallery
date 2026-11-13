@@ -30,3 +30,10 @@ export function personLabel(cls, no, name) {
   if (cls === '老師') return name || no;
   return `${cls || ''} ${no ? no + '號 ' : ''}${name || ''}`.trim();
 }
+
+export function hourLabel(h) {
+  h = ((h % 24) + 24) % 24; const hh = Math.floor(h), mm = Math.round((h - hh) * 60);
+  const icon = h < 5.5 || h >= 19 ? '🌙' : h < 8 ? '🌅' : h < 16.5 ? '☀️' : '🌇';
+  const ap = hh < 12 ? '上午' : '下午'; const h12 = hh % 12 === 0 ? 12 : hh % 12;
+  return `${icon} ${ap} ${h12}:${String(mm).padStart(2, '0')}`;
+}

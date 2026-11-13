@@ -1,7 +1,7 @@
-import { db, DuplicateError } from './data.js?v=20261113a';
-import { SITE_NAME } from './config.js?v=20261113a';
-import { STICKERS, PHRASES, THEMES, themeColors, stickerUrl, gradeLabel } from './constants.js?v=20261113a';
-import { $, $$, esc, toast, store, show, personLabel } from './ui.js?v=20261113a';
+import { db, DuplicateError } from './data.js?v=20261113b';
+import { SITE_NAME } from './config.js?v=20261113b';
+import { STICKERS, PHRASES, THEMES, themeColors, stickerUrl, gradeLabel } from './constants.js?v=20261113b';
+import { $, $$, esc, toast, store, show, personLabel, hourLabel } from './ui.js?v=20261113b';
 
 // S.code：學生連結代碼（冇就係老師模式）
 const S = { code: null, link: null, teacher: null, galleries: [], cur: null, hall: null, hallArts: [], reactions: {}, me: store.get('gallery-me'), viewer: null, modalIdx: -1, modalDispose: null, poll: null };
@@ -31,7 +31,7 @@ async function ensureFonts(text) {
 async function route() {
   const h = location.hash.slice(1);
   closeModal(); stopPoll();
-  if (h === 'admin') { const m = await import('./admin.js?v=20261113a'); m.openAdmin(); return; }
+  if (h === 'admin') { const m = await import('./admin.js?v=20261113b'); m.openAdmin(); return; }
   let m = h.match(/^s-([a-z0-9]{4,16})(?:-g-(.+))?$/);
   if (m) {
     S.me = store.get('gallery-me');
@@ -96,6 +96,7 @@ async function openGallery(id) {
   let full;
   try { full = await src.full(id); } catch (e) { toast('載入唔到：' + e.message); location.hash = homeHash(); return; }
   if (!full) { toast('呢個畫廊冇開放俾呢條連結'); location.hash = homeHash(); return; }
+  if (S.cur?.gallery.id !== full.gallery.id) S.viewer?.setSunOverride(null);
   S.cur = full;
   const c = themeColors(full.gallery);
   document.documentElement.style.setProperty('--accent', full.gallery.theme === 'minimal' ? '#1f1d1a' : c.accent);
@@ -145,8 +146,9 @@ async function fade(fn) { const f = $('#fade'); f.classList.add('on'); await new
 
 async function ensureViewer() {
   if (S.viewer) return S.viewer;
-  const { Gallery3D } = await import('./gallery3d.js?v=20261113a');
-  S.viewer = new Gallery3D($('#three-host'), { onArt: (a) => openModal(S.hallArts.findIndex((x) => x.id === a.id)), onEnterHall: (h) => enterHall(h), onExitHall: () => exitHall() });
+  const { Gallery3D } = await import('./gallery3d.js?v=20261113b');
+  S.viewer = new Gallery3D($('#three-host'), { onArt: (a) => openModal(S.hallArts.findIndex((x) => x.id === a.id)), onEnterHall: (h) => enterHall(h), onExitHall: () => exitHall(), onRoom: (k, n, counts) => updateRoomChip(k, n, counts) });
+  setupHudPanels();
   setupJoystick();
   $('#btn-prev').onclick = () => S.viewer.step(-1);
   $('#btn-next').onclick = () => S.viewer.step(1);
@@ -167,7 +169,7 @@ async function enter3D() {
     await ensureFonts(gallery.title + gallery.subtitle + gallery.edition + halls.map((h) => h.name).join(''));
     const counts = {}; artworks.forEach((a) => (counts[a.hall_id] = (counts[a.hall_id] || 0) + 1));
     await v.loadLobby(gallery, halls, counts); S.hall = null;
-    $('#hud-nav').classList.add('hidden');
+    $('#hud-nav').classList.add('hidden'); $('#hud-room').classList.add('hidden'); closePanels(); updateSunChip();
   });
   hint(halls.length > 1 ? '揀一條通道行入去，或者直接撳門口' : '行入門口，或者直接撳門口');
 }
@@ -183,7 +185,7 @@ async function enterHall(hall) {
     await ensureFonts(arts.map((a) => (a.title || '') + (a.student_name || '') + (a.student_class || '')).join('') + hall.name + S.cur.gallery.title);
     await v.loadHall(S.cur.gallery, hall, arts, S.reactions, media);
     S.hallArts = v.arts.map((e) => e.art); // 跟展廳次序
-    $('#hud-nav').classList.toggle('hidden', !arts.length);
+    $('#hud-nav').classList.toggle('hidden', !arts.length); updateSunChip();
   });
   hint(arts.length ? '撳「›」跳去下一件，撳作品可以睇近啲同送讚' : '呢度暫時未有作品');
   startPoll();
@@ -193,6 +195,34 @@ async function exitHall() {
   const hall = S.hall;
   await enter3D();
   if (hall && S.viewer?.doors) { const d = S.viewer.doors.find((x) => x.hall.id === hall.id); if (d) { S.viewer.pos.set(d.x, 1.6, -S.viewer.lobbyInfo.D / 2 + 2.2); S.viewer.yaw = Math.PI; S.viewer.pitch = 0; } }
+}
+
+// ---------- 展室選單同陽光 ----------
+let roomState = { k: 0, n: 1, counts: [] }, sunTimer;
+function closePanels() { $('#room-menu').classList.add('hidden'); $('#sun-panel').classList.add('hidden'); clearInterval(sunTimer); }
+function updateRoomChip(k, n, counts) {
+  roomState = { k, n, counts };
+  const chip = $('#hud-room'); chip.classList.toggle('hidden', n < 2); chip.textContent = `🚪 展室 ${k + 1}/${n} ▾`;
+  if (!$('#room-menu').classList.contains('hidden')) renderRoomMenu();
+}
+function renderRoomMenu() {
+  const m = $('#room-menu');
+  m.innerHTML = roomState.counts.map((c, i) => `<button data-r="${i}" class="${i === roomState.k ? 'on' : ''}">展室 ${i + 1}<span>${c} 件作品</span></button>`).join('');
+  $$('button', m).forEach((b) => (b.onclick = async () => { closePanels(); await fade(async () => S.viewer.goToRoom(Number(b.dataset.r))); }));
+}
+function canSun() { const l = S.cur?.gallery.light; return !!l && l.mode && l.mode !== 'off' && (l.student || !S.code); }
+function updateSunChip() {
+  const chip = $('#hud-sun'); const ok = canSun() && S.viewer?.sunInfo().on;
+  chip.classList.toggle('hidden', !ok); if (ok) chip.textContent = hourLabel(S.viewer.sunInfo().hour).split(' ')[0] + ' 陽光';
+}
+function setupHudPanels() {
+  $('#hud-room').onclick = () => { const m = $('#room-menu'); const open = m.classList.contains('hidden'); closePanels(); if (open) { renderRoomMenu(); m.classList.remove('hidden'); } };
+  const lab = () => { const i = S.viewer.sunInfo(); $('#sun-lab').textContent = hourLabel(i.hour); $('#sun-reset').classList.toggle('hidden', !i.override); if (document.activeElement !== $('#sun-range')) $('#sun-range').value = Math.max(5.5, Math.min(21, i.hour)); updateSunChip(); };
+  $('#hud-sun').onclick = () => { const p = $('#sun-panel'); const open = p.classList.contains('hidden'); closePanels(); if (open) { p.classList.remove('hidden'); lab(); sunTimer = setInterval(lab, 500); } };
+  $('#sun-range').oninput = (e) => { S.viewer.setSunOverride(Number(e.target.value)); lab(); };
+  $$('.sun-presets button').forEach((b) => (b.onclick = () => { S.viewer.setSunOverride(Number(b.dataset.h)); $('#sun-range').value = b.dataset.h; lab(); }));
+  $('#sun-reset').onclick = () => { S.viewer.setSunOverride(null); lab(); };
+  $('#three-host').addEventListener('pointerdown', closePanels);
 }
 
 // 每 15 秒睇吓有冇新讚賞
@@ -228,12 +258,12 @@ async function openModal(i) {
   const idx = S.modalIdx;
   if (a.kind === 'model') {
     view.classList.add('is-3d');
-    const { openModelView } = await import('./modal-viewer.js?v=20261113a');
+    const { openModelView } = await import('./modal-viewer.js?v=20261113b');
     if (S.modalIdx === idx) S.modalDispose = openModelView(view, db, a.model_path);
   } else if (a.kind === 'photos') {
     view.classList.add('is-3d');
     const urls = await Promise.all((a.photo_paths || []).map((p) => db.mediaUrl(p)));
-    const { openPhotoSpin } = await import('./modal-viewer.js?v=20261113a');
+    const { openPhotoSpin } = await import('./modal-viewer.js?v=20261113b');
     if (S.modalIdx === idx) S.modalDispose = openPhotoSpin(view, urls);
   } else {
     const img = document.createElement('img'); img.alt = ''; img.src = await db.mediaUrl(a.image_path); view.appendChild(img);
