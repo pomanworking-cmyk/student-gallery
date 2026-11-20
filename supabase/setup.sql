@@ -70,7 +70,7 @@ create table if not exists halls (
 create table if not exists artworks (
   id uuid primary key default gen_random_uuid(),
   hall_id uuid not null references halls(id) on delete cascade,
-  kind text not null default 'flat' check (kind in ('flat','photos','model')),
+  kind text not null default 'flat' check (kind in ('flat','photos','model','video')),
   student_class text,
   student_no int,
   student_name text,
@@ -278,3 +278,9 @@ returns uuid[] language sql stable security definer set search_path = public as 
 $$;
 
 grant execute on function link_mark_seen, link_my_seen to anon, authenticated;
+
+-- ---------- 8. 電影院（影片作品） ----------
+alter table artworks drop constraint if exists artworks_kind_check;
+alter table artworks add constraint artworks_kind_check check (kind in ('flat','photos','model','video'));
+alter table artworks add column if not exists video_path text;     -- 影片檔
+alter table artworks add column if not exists duration real;       -- 片長（秒）

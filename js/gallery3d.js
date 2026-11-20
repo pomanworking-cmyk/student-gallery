@@ -1,6 +1,6 @@
 // 3D 畫廊場景：大堂（門口大標題＋各班通道）同展廳
 import * as THREE from 'three';
-import { themeColors, COLORFUL_PANELS, FONT, KIDS_FONT, stickerUrl } from './constants.js?v=20261113f';
+import { themeColors, COLORFUL_PANELS, FONT, KIDS_FONT, stickerUrl } from './constants.js?v=20261120a';
 import { RoomEnvironment } from '../vendor/jsm/environments/RoomEnvironment.js';
 
 // 寫實材質（textures/ 入面嘅檔案係程序生成，可以自由使用）
@@ -191,7 +191,8 @@ export class Gallery3D {
   _room({ W, D, H, holes = {} }) {
     const col = this.colors;
     let floorMat;
-    if (this.theme === 'kids') { const floorTex = this._floorTexture(this.theme, col.floor); floorTex.repeat.set(W / 4, D / 4); const ps = pbrSet('rubber', W / 4, D / 4, false); floorMat = this._mat(0xffffff, { map: floorTex, normalMap: ps.normalMap, roughnessMap: ps.roughnessMap, roughness: 1, normalScale: new THREE.Vector2(0.6, 0.6) }); }
+    if (this.theme === 'cinema') { const ps = pbrSet('plaster', W / 1.2, D / 1.2, false); floorMat = this._mat(col.floor, { normalMap: ps.normalMap, roughnessMap: ps.roughnessMap, roughness: 1, normalScale: new THREE.Vector2(1.4, 1.4), envMapIntensity: 0.2 }); }
+    else if (this.theme === 'kids') { const floorTex = this._floorTexture(this.theme, col.floor); floorTex.repeat.set(W / 4, D / 4); const ps = pbrSet('rubber', W / 4, D / 4, false); floorMat = this._mat(0xffffff, { map: floorTex, normalMap: ps.normalMap, roughnessMap: ps.roughnessMap, roughness: 1, normalScale: new THREE.Vector2(0.6, 0.6) }); }
     else if (this.theme === 'colorful') { const ps = pbrSet('terrazzo', W / 3, D / 3); floorMat = this._mat(new THREE.Color(col.floor).lerp(new THREE.Color('#ffffff'), 0.08), { ...ps, roughness: 1, envMapIntensity: 1.3, normalScale: new THREE.Vector2(0.4, 0.4) }); }
     else { const ps = pbrSet('wood', W / 3.2, D / 3.2); floorMat = this._mat(new THREE.Color(col.floor).lerp(new THREE.Color('#ffffff'), 0.12), { ...ps, roughness: 1, envMapIntensity: 1.1 }); }
     const floor = this._plane(W, D, floorMat); floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; this.root.add(floor);
@@ -214,7 +215,7 @@ export class Gallery3D {
     const railMat = this._mat('#2b2b2b', { roughness: 0.4, metalness: 0.6 });
     [-W / 2 + 1.1, W / 2 - 1.1].forEach((x) => { const r = this._box(0.05, 0.04, D - 0.4, railMat); r.position.set(x, H - 0.03, 0); this.root.add(r); });
     const lightMat = this._basic({ color: 0xffffff });
-    if (!this.sunOn) for (let z = -D / 2 + 2; z <= D / 2 - 2; z += 4) { const l = this._box(Math.min(W * 0.3, 2), 0.03, 0.25, lightMat); l.position.set(0, H - 0.02, z); this.root.add(l); }
+    if (!this.sunOn && this.theme !== 'cinema') for (let z = -D / 2 + 2; z <= D / 2 - 2; z += 4) { const l = this._box(Math.min(W * 0.3, 2), 0.03, 0.25, lightMat); l.position.set(0, H - 0.02, z); this.root.add(l); }
     const wps = pbrSet('plaster', 1 / 2.5, 1 / 2.5);
     const wallMat = this._mat(col.wall, { side: THREE.DoubleSide, ...wps, roughness: 1, normalScale: new THREE.Vector2(0.5, 0.5) });
     this._aoMat ||= null; const aoMat = this._basic({ map: this._getAOTex(), transparent: true, depthWrite: false, color: 0x000000, opacity: 0.32, side: THREE.DoubleSide });
@@ -282,7 +283,7 @@ export class Gallery3D {
     // 各班通道
     halls.forEach((hall, i) => {
       const x = xs[i];
-      const pc = this.theme === 'colorful' ? COLORFUL_PANELS[i % COLORFUL_PANELS.length] : this.theme === 'kids' ? ['#ef476f', '#06d6a0', '#118ab2', '#ffb703', '#9b5de5'][i % 5] : '#2b2b2b';
+      const pc = hall.cinema ? '#7a1424' : this.theme === 'colorful' ? COLORFUL_PANELS[i % COLORFUL_PANELS.length] : this.theme === 'kids' ? ['#ef476f', '#06d6a0', '#118ab2', '#ffb703', '#9b5de5'][i % 5] : '#2b2b2b';
       // 門框
       const frameMat = this._mat(pc);
       const fl = this._box(0.14, doorH + 0.14, 0.3, frameMat); fl.position.set(x - doorW / 2 - 0.07, (doorH + 0.14) / 2, -D / 2); this.root.add(fl);
@@ -292,7 +293,7 @@ export class Gallery3D {
       const tunnelLen = 3;
       const tMat = this._mat(shade(col.wall, -0.06), { side: THREE.BackSide });
       const tunnel = this._box(doorW, doorH, tunnelLen, tMat); tunnel.position.set(x, doorH / 2, -D / 2 - tunnelLen / 2); tunnel.castShadow = true; this.root.add(tunnel);
-      const glowC = this._textCanvas({ w: 512, h: 700, bg: pc, lines: [{ text: hall.name, size: 170, color: '#fff', weight: 900, font: this.titleFont }, { text: `${counts[hall.id] || 0} 件作品`, size: 54, color: 'rgba(255,255,255,.9)', weight: 500 }, { text: '入去參觀 →', size: 50, color: 'rgba(255,255,255,.9)', weight: 700 }] });
+      const glowC = this._textCanvas({ w: 512, h: 700, bg: pc, lines: [{ text: hall.cinema ? '🎬' : hall.name, size: 170, color: '#fff', weight: 900, font: this.titleFont }, { text: hall.cinema ? '電影院' : `${counts[hall.id] || 0} 件作品`, size: hall.cinema ? 84 : 54, color: 'rgba(255,255,255,.95)', weight: hall.cinema ? 900 : 500 }, { text: hall.cinema ? `${counts[hall.id] || 0} 套影片 · 入場 →` : '入去參觀 →', size: 50, color: 'rgba(255,255,255,.9)', weight: 700 }] });
       const glow = this._plane(doorW - 0.02, doorH - 0.02, this._basic({ map: this._canvasTex(glowC) }));
       glow.position.set(x, doorH / 2, -D / 2 - tunnelLen + 0.02); glow.userData = { type: 'door', hall }; this.root.add(glow); this.clickables.push(glow);
       // 門口上面嘅班牌
@@ -522,7 +523,7 @@ export class Gallery3D {
 
   // ---------- 偵測學生睇過邊件作品 ----------
   _checkSeen(dt) {
-    if (!this.h.onSeen || !this.arts.length) return;
+    if (!this.h.onSeen || !this.arts.length || this.mode === 'cinema') return;
     this._seenT = (this._seenT || 0) + dt; if (this._seenT < 0.3) return; const step = this._seenT; this._seenT = 0;
     const fwd = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
     for (const e of this.arts) {
@@ -601,7 +602,7 @@ export class Gallery3D {
 
   _loadPedestalModel(entry) {
     entry.modelState = 'loading';
-    import('./models.js?v=20261113f').then(({ loadArtModel, normalize }) => loadArtModel(this.media.db, entry.art.model_path).then((obj) => {
+    import('./models.js?v=20261120a').then(({ loadArtModel, normalize }) => loadArtModel(this.media.db, entry.art.model_path).then((obj) => {
       if (!entry.group.parent) return;
       const m = normalize(obj, 0.85); m.traverse((o) => { if (o.isMesh) o.castShadow = true; }); entry.holder.remove(entry.placeholder); entry.holder.add(m); entry.model = m; entry.modelState = 'ready';
     })).catch((e) => { console.warn('模型載入失敗', e); entry.modelState = 'error'; if (entry.placeholder) entry.placeholder.material.color.set('#e8a0a0'); });
@@ -701,6 +702,110 @@ export class Gallery3D {
     const e = this.arts.find((a) => a.art.id === artId); if (e) this._buildStickers(e, reactions);
   }
 
+  // ---------- 電影院 ----------
+  async loadCinema(gallery, videos, reactionsByArt, media) {
+    this._clear(); this.mode = 'cinema'; this.media = media;
+    this._setupWorld({ ...gallery, light: { mode: 'off' } });
+    this.theme = 'cinema'; this.titleFont = FONT;
+    this.colors = { wall: '#2a1d22', floor: '#4b1626', bg: '#050305', accent: '#c9a227' };
+    this.scene.background = new THREE.Color('#050305'); this.scene.fog = new THREE.Fog('#050305', 20, 45);
+    const L = this.L; L.hemi.intensity = 0.18; L.amb.intensity = 0.12; L.dir.intensity = 0; this.scene.environmentIntensity = 0.12;
+    const W = 13, D = 17, H = 6.5, doorW = 2.2, doorH = 3;
+    this._room({ W, D, H, holes: { back: [{ x: 0, w: doorW, h: doorH }] } });
+    // 出口
+    const exitC = this._textCanvas({ w: 512, h: 700, bg: '#1a1114', lines: [{ text: '← 返大堂', size: 80, color: '#fff', weight: 800 }] });
+    const exit = this._plane(doorW, doorH, this._basic({ map: this._canvasTex(exitC) }));
+    exit.position.set(0, doorH / 2, D / 2 + 1.2); exit.rotation.y = Math.PI; exit.userData = { type: 'exit' }; this.root.add(exit); this.clickables.push(exit);
+    const tun = this._box(doorW, doorH, 1.2, this._mat('#1a1114', { side: THREE.BackSide })); tun.position.set(0, doorH / 2, D / 2 + 0.6); this.root.add(tun);
+    const exS = this._textCanvas({ w: 512, h: 150, bg: '#0b7a3b', radius: 12, lines: [{ text: '出口 EXIT', size: 80, color: '#fff', weight: 900 }] });
+    const exSign = this._plane(0.9, 0.26, this._basic({ map: this._canvasTex(exS) })); exSign.position.set(0, doorH + 0.35, D / 2 - 0.03); exSign.rotation.y = Math.PI; this.root.add(exSign);
+    // 舞台、銀幕、布幕
+    const zf = -D / 2;
+    const stage = this._box(W - 1, 0.6, 1.6, this._mat('#1b1214', { roughness: 0.8 })); stage.position.set(0, 0.3, zf + 0.8); this.root.add(stage);
+    const stageLip = this._box(W - 1, 0.04, 0.05, this._basic({ color: '#c9a227' })); stageLip.position.set(0, 0.6, zf + 1.6); this.root.add(stageLip);
+    this.obstacles.push({ x: 0, z: zf + 0.8, rx: W / 2, rz: 1.1 });
+    const SW = 9.2, SH = SW * 9 / 16, sy = 0.95 + SH / 2;
+    const frame = this._box(SW + 0.3, SH + 0.3, 0.08, this._mat('#050505', { roughness: 0.9 })); frame.position.set(0, sy, zf + 0.08); this.root.add(frame);
+    this.screenMat = this._basic({ color: 0xffffff });
+    const screen = this._plane(SW, SH, this.screenMat); screen.position.set(0, sy, zf + 0.13); screen.userData = { type: 'screen' }; this.root.add(screen); this.clickables.push(screen);
+    this.screen = { mesh: screen, W: SW, H: SH };
+    this._setScreenCard(videos.length ? '撳下面 ▶ 開始播放' : '暫時未有影片', videos.length ? '或者撳「🎞 片單」揀影片' : '');
+    const curtain = this._curtainTex();
+    [-1, 1].forEach((sd) => {
+      const c = this._plane(2.2, H - 0.2, this._mat(0xffffff, { map: curtain, roughness: 0.75, side: THREE.DoubleSide })); c.position.set(sd * (SW / 2 + 1.0), (H - 0.2) / 2, zf + 0.25); this.root.add(c);
+    });
+    const val = this._plane(W, 0.9, this._mat(0xffffff, { map: curtain, roughness: 0.75 })); val.position.set(0, H - 0.45, zf + 0.3); this.root.add(val);
+    // 銀幕光
+    const glow = new THREE.PointLight(0xbfd4ff, 0, 18, 1.4); glow.position.set(0, sy, zf + 3); this.root.add(glow); this.screenLight = glow;
+    // 座位（用 InstancedMesh，夠快）
+    const rows = 6, seatW = 0.62, aisle = 1.7, blockEdge = W / 2 - 1.3;
+    const perBlock = Math.floor((blockEdge - aisle / 2) / seatW);
+    const seats = []; const z0 = zf + 5.2;
+    for (let r = 0; r < rows; r++) { const z = z0 + r * 1.35; [-1, 1].forEach((sd) => { for (let k = 0; k < perBlock; k++) seats.push({ x: sd * (aisle / 2 + seatW / 2 + k * seatW), z }); });
+      [-1, 1].forEach((sd) => { const x0 = aisle / 2, x1 = aisle / 2 + perBlock * seatW; this.obstacles.push({ x: sd * (x0 + x1) / 2, z: z + 0.05, rx: (x1 - x0) / 2 + 0.2, rz: 0.55 }); }); }
+    const seatMat = this._mat('#8e1b2c', { roughness: 0.85 }); const armMat = this._mat('#1a1214', { roughness: 0.5, metalness: 0.3 });
+    const mk = (geo, mat, f) => { const im = new THREE.InstancedMesh(this._track(geo), mat, seats.length); const m = new THREE.Matrix4(); seats.forEach((st, i) => { f(m, st); im.setMatrixAt(i, m); }); this.root.add(im); return im; };
+    mk(new THREE.BoxGeometry(seatW - 0.08, 0.14, 0.5), seatMat, (m, st) => m.makeTranslation(st.x, 0.45, st.z));
+    mk(new THREE.BoxGeometry(seatW - 0.08, 0.7, 0.12), seatMat, (m, st) => m.makeRotationX(-0.14).setPosition(st.x, 0.85, st.z + 0.28));
+    mk(new THREE.BoxGeometry(0.05, 0.25, 0.48), armMat, (m, st) => m.makeTranslation(st.x - seatW / 2, 0.55, st.z + 0.02));
+    mk(new THREE.BoxGeometry(seatW - 0.1, 0.38, 0.06), armMat, (m, st) => m.makeTranslation(st.x, 0.19, st.z - 0.2));
+    // 走廊地燈
+    const stepMat = this._basic({ color: '#ffcf6b' });
+    for (let r = 0; r <= rows; r++) [-1, 1].forEach((sd) => { const l = this._box(0.12, 0.03, 0.05, stepMat); l.position.set(sd * (aisle / 2 - 0.1), 0.02, z0 - 0.7 + r * 1.35); this.root.add(l); });
+    // 壁燈
+    const sconceMat = this._basic({ color: '#ffd9a0' });
+    [-1, 1].forEach((sd) => [zf + 5, zf + 9, zf + 13].forEach((z) => { const sc = this._box(0.06, 0.5, 0.25, sconceMat); sc.position.set(sd * (W / 2 - 0.04), 3.2, z); this.root.add(sc);
+      const pl = new THREE.PointLight(0xffc98a, 2.2, 4.5, 1.6); pl.position.set(sd * (W / 2 - 0.4), 3.2, z); this.root.add(pl); }));
+    // 兩邊牆嘅海報（撳就播）
+    const posters = videos.slice(0, 8);
+    posters.forEach((v, i) => {
+      const sd = i % 2 ? 1 : -1; const z = zf + 6.6 + Math.floor(i / 2) * 2.4;
+      const g = new THREE.Group(); g.position.set(sd * (W / 2 - 0.01), 0, z); g.rotation.y = -sd * Math.PI / 2;
+      const e = { art: v, group: g, type: 'wall', z, room: 0, index: i, normal: new THREE.Vector3(-sd, 0, 0) };
+      this.root.add(g); this.arts.push(e);
+      this._buildArt(e, i, (x) => this.media.url(x.thumb_path || x.image_path), 1.2, 0.8); e.load();
+      this._buildStickers(e, reactionsByArt[v.id] || []);
+    });
+    this.bounds = { minX: -W / 2 + 0.5, maxX: W / 2 - 0.5, minZ: zf + 1.9, maxZ: D / 2 - 0.5, backZ: D / 2 };
+    this.hallDoorW = doorW; this.partitions = [];
+    this.pos.set(0, EYE, D / 2 - 1.5); this.yaw = 0; this.pitch = 0.08; this._prevZ = this.pos.z;
+    this.cinema = { sy, zf, z0, rows };
+  }
+  _curtainTex() {
+    const c = document.createElement('canvas'); c.width = 512; c.height = 64; const x = c.getContext('2d');
+    for (let i = 0; i < 512; i++) { const v = 0.55 + 0.45 * Math.sin(i / 512 * Math.PI * 2 * 14) ** 2; x.fillStyle = `rgb(${Math.round(150 * v)},${Math.round(18 * v)},${Math.round(36 * v)})`; x.fillRect(i, 0, 1, 64); }
+    const t = this._canvasTex(c); t.wrapS = THREE.RepeatWrapping; return t;
+  }
+  _setScreenCard(title, sub) {
+    const c = this._textCanvas({ w: 1600, h: 900, bg: '#111018', lines: [{ text: '🎬', size: 160, color: '#fff', weight: 900 }, { text: title, size: 84, color: '#fff', weight: 800 }, { text: sub || '', size: 52, color: '#bdb6c9', weight: 500 }].filter((l) => l.text) });
+    this._setScreenTex(this._canvasTex(c), 16 / 9); if (this.screenLight) this.screenLight.intensity = 3;
+  }
+  setScreenVideo(videoEl, aspect) {
+    if (!this.screen) return;
+    if (!videoEl) return this._setScreenCard('撳下面 ▶ 開始播放', '或者撳「🎞 片單」揀影片');
+    const t = new THREE.VideoTexture(videoEl); t.colorSpace = THREE.SRGBColorSpace; this._track(t);
+    this._setScreenTex(t, aspect || 16 / 9); if (this.screenLight) this.screenLight.intensity = 9;
+  }
+  setScreenPoster(url, aspect, title) {
+    if (!this.screen) return;
+    this.loader.load(url, (t) => { t.colorSpace = THREE.SRGBColorSpace; this._track(t); this._setScreenTex(t, aspect || t.image.width / t.image.height); if (this.screenLight) this.screenLight.intensity = 6; });
+  }
+  _setScreenTex(tex, aspect) {
+    const s = this.screen, m = this.screenMat; const old = m.map; m.map = tex; m.needsUpdate = true;
+    let w = s.W, h = w / aspect; if (h > s.H) { h = s.H; w = h * aspect; }
+    s.mesh.scale.set(w / s.W, h / s.H, 1);
+    if (old && old !== tex && old.isVideoTexture) old.dispose();
+  }
+  sit() {
+    if (this.mode !== 'cinema' || !this.cinema) return;
+    const z = this.cinema.z0 + 2 * 1.35; const target = new THREE.Vector3(0, 1.25, z);
+    const look = new THREE.Vector3(0, this.cinema.sy, this.cinema.zf).sub(target);
+    const yaw = 0; let dy = yaw - this.yaw; while (dy > Math.PI) dy -= 2 * Math.PI; while (dy < -Math.PI) dy += 2 * Math.PI;
+    const pitch = Math.atan2(look.y, -look.z);
+    const pts = [this.pos.clone(), target]; const l = pts[0].distanceTo(target);
+    this.glide = { pts, segs: [l], total: l, yaw0: this.yaw, yaw1: this.yaw + dy, p0: this.pitch, p1: Math.min(0.45, pitch), t: 0, dur: Math.min(3, Math.max(0.8, l / 5)) };
+  }
+
   // ---------- 導航 ----------
   goToArt(i) {
     if (!this.arts.length || !this.mode) return;
@@ -763,6 +868,7 @@ export class Gallery3D {
     if (u.type === 'art') { this.currentArt = u.index; this.h.onArt?.(this.arts[u.index].art); }
     else if (u.type === 'door') this.h.onEnterHall?.(u.hall);
     else if (u.type === 'exit') this.h.onExitHall?.();
+    else if (u.type === 'screen') this.h.onScreen?.();
   }
 
   _tick() {
@@ -783,6 +889,7 @@ export class Gallery3D {
         const len = Math.hypot(mx, my); if (len > 1) { mx /= len; my /= len; }
         const fx = -Math.sin(this.yaw), fz = -Math.cos(this.yaw), rx = Math.cos(this.yaw), rz = -Math.sin(this.yaw);
         this.pos.x += (fx * my + rx * mx) * SPEED * dt; this.pos.z += (fz * my + rz * mx) * SPEED * dt;
+        if (Math.abs(this.pos.y - EYE) > 0.001) this.pos.y += (EYE - this.pos.y) * Math.min(1, dt * 4);
         this.currentArt = -1;
       }
       this._collide();
@@ -815,7 +922,7 @@ export class Gallery3D {
       } else { p.z = Math.max(b.minZ, p.z); }
       p.x = Math.max(b.minX, Math.min(b.maxX, p.x)); p.z = Math.min(b.maxZ, p.z);
       for (const o of this.obstacles || []) { const dx = p.x - o.x, dz = p.z - o.z; if (Math.abs(dx) < o.rx && Math.abs(dz) < o.rz) { if (o.rx - Math.abs(dx) < o.rz - Math.abs(dz)) p.x = o.x + Math.sign(dx || 1) * o.rx; else p.z = o.z + Math.sign(dz || 1) * o.rz; } }
-    } else if (this.mode === 'hall') {
+    } else if (this.mode === 'hall' || this.mode === 'cinema') {
       p.x = Math.max(b.minX, Math.min(b.maxX, p.x)); p.z = Math.max(b.minZ, p.z);
       for (const o of this.obstacles || []) { const dx = p.x - o.x, dz = p.z - o.z; if (Math.abs(dx) < o.rx && Math.abs(dz) < o.rz) { if (o.rx - Math.abs(dx) < o.rz - Math.abs(dz)) p.x = o.x + Math.sign(dx || 1) * o.rx; else p.z = o.z + Math.sign(dz || 1) * o.rz; } }
       const lim = this.hallDoorW / 2 - 0.35; for (const zb of this.partitions) { if (Math.abs(p.z - zb) < 0.35 && Math.abs(p.x) > lim) p.z = zb + (this._prevZ >= zb ? 0.35 : -0.35); }

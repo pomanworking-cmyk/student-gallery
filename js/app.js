@@ -1,7 +1,7 @@
-import { db, DuplicateError } from './data.js?v=20261113f';
-import { SITE_NAME } from './config.js?v=20261113f';
-import { STICKERS, PHRASES, THEMES, themeColors, stickerUrl, gradeLabel } from './constants.js?v=20261113f';
-import { $, $$, esc, toast, store, show, personLabel, hourLabel } from './ui.js?v=20261113f';
+import { db, DuplicateError } from './data.js?v=20261120a';
+import { SITE_NAME } from './config.js?v=20261120a';
+import { STICKERS, PHRASES, THEMES, themeColors, stickerUrl, gradeLabel } from './constants.js?v=20261120a';
+import { $, $$, esc, toast, store, show, personLabel, hourLabel } from './ui.js?v=20261120a';
 
 // S.code：學生連結代碼（冇就係老師模式）
 const S = { seen: new Set(), seenGid: null, code: null, link: null, teacher: null, galleries: [], cur: null, hall: null, hallArts: [], reactions: {}, me: store.get('gallery-me'), viewer: null, modalIdx: -1, modalDispose: null, poll: null };
@@ -31,7 +31,7 @@ async function ensureFonts(text) {
 async function route() {
   const h = location.hash.slice(1);
   closeModal(); stopPoll();
-  if (h === 'admin') { const m = await import('./admin.js?v=20261113f'); m.openAdmin(); return; }
+  if (h === 'admin') { const m = await import('./admin.js?v=20261120a'); m.openAdmin(); return; }
   let m = h.match(/^s-([a-z0-9]{4,16})(?:-g-(.+))?$/);
   if (m) {
     S.me = store.get('gallery-me');
@@ -146,14 +146,15 @@ async function fade(fn) { const f = $('#fade'); f.classList.add('on'); await new
 
 async function ensureViewer() {
   if (S.viewer) return S.viewer;
-  const { Gallery3D } = await import('./gallery3d.js?v=20261113f');
-  S.viewer = new Gallery3D($('#three-host'), { onArt: (a) => openModal(S.hallArts.findIndex((x) => x.id === a.id)), onEnterHall: (h) => enterHall(h), onExitHall: () => exitHall(), onRoom: (k, n, counts) => updateRoomChip(k, n, counts), onSeen: (a) => markSeen(a) });
+  const { Gallery3D } = await import('./gallery3d.js?v=20261120a');
+  S.viewer = new Gallery3D($('#three-host'), { onArt: (a) => (S.viewer.mode === 'cinema' ? cinePlay(S.hallArts.findIndex((x) => x.id === a.id), true) : openModal(S.hallArts.findIndex((x) => x.id === a.id))), onEnterHall: (h) => enterHall(h), onExitHall: () => exitHall(), onRoom: (k, n, counts) => updateRoomChip(k, n, counts), onSeen: (a) => markSeen(a), onScreen: () => cineToggle() });
   setupMinimap();
   setupHudPanels();
   setupJoystick();
-  $('#btn-prev').onclick = () => S.viewer.step(-1);
-  $('#btn-next').onclick = () => S.viewer.step(1);
-  $('#btn-home').onclick = () => (location.hash = homeHash());
+  $('#btn-prev').onclick = () => (S.viewer.mode === 'cinema' ? cinePlay(C.idx - 1) : S.viewer.step(-1));
+  $('#btn-next').onclick = () => (S.viewer.mode === 'cinema' ? cinePlay(C.idx + 1) : S.viewer.step(1));
+  setupCinemaUi();
+  $('#btn-home').onclick = () => { stopCinema(); location.hash = homeHash(); };
   $('#hud-me').onclick = () => { if (S.code) askWho(() => show('screen-3d')); };
   return S.viewer;
 }
@@ -168,21 +169,26 @@ async function enter3D() {
   $('#hud-title').textContent = `${gallery.edition || ''} ${gallery.title}`;
   await fade(async () => {
     await ensureFonts(gallery.title + gallery.subtitle + gallery.edition + halls.map((h) => h.name).join(''));
-    const counts = {}; artworks.forEach((a) => (counts[a.hall_id] = (counts[a.hall_id] || 0) + 1));
+    const counts = {}; artworks.filter((a) => a.kind !== 'video').forEach((a) => (counts[a.hall_id] = (counts[a.hall_id] || 0) + 1));
+    const vids = artworks.filter((a) => a.kind === 'video');
+    const lobbyHalls = halls.filter((h) => counts[h.id] || !artworks.some((a) => a.hall_id === h.id));
+    if (vids.length) { lobbyHalls.push(CINEMA); counts[CINEMA.id] = vids.length; }
     let rs = []; try { rs = await src.reactions(artworks.map((a) => a.id)); } catch (e) {}
     S.reactions = {}; rs.forEach((r) => (S.reactions[r.artwork_id] ||= []).push(r));
     const popular = artworks.filter((a) => (S.reactions[a.id] || []).length).sort((a, b) => S.reactions[b.id].length - S.reactions[a.id].length).slice(0, 6);
     await loadSeen();
-    await v.loadLobby(gallery, halls, counts, popular, S.reactions, media); S.hall = null;
+    stopCinema(); $('#cine-bar').classList.add('hidden');
+    await v.loadLobby(gallery, lobbyHalls, counts, popular, S.reactions, media); S.hall = null;
     S.hallArts = v.arts.map((e) => e.art); v.markSeen([...S.seen]); updateSteps();
     $('#hud-nav').classList.toggle('hidden', !S.hallArts?.length); $('#hud-room').classList.add('hidden'); closePanels(); updateSunChip();
   });
-  hint(halls.length > 1 ? '揀一條通道行入去，或者直接撳門口' : '行入門口，或者直接撳門口');
+  hint(halls.length > 1 || S.cur.artworks.some((a) => a.kind === 'video') ? '揀一條通道行入去，或者直接撳門口' : '行入門口，或者直接撳門口');
 }
 
 async function enterHall(hall) {
+  if (hall.cinema) return enterCinema();
   const v = S.viewer;
-  const arts = S.cur.artworks.filter((a) => a.hall_id === hall.id).sort((a, b) => (Number(a.student_no) || 999) - (Number(b.student_no) || 999) || (a.sort ?? 0) - (b.sort ?? 0));
+  const arts = S.cur.artworks.filter((a) => a.hall_id === hall.id && a.kind !== 'video').sort((a, b) => (Number(a.student_no) || 999) - (Number(b.student_no) || 999) || (a.sort ?? 0) - (b.sort ?? 0));
   S.hall = hall;
   await fade(async () => {
     let rs = [];
@@ -206,7 +212,7 @@ async function exitHall() {
 
 // ---------- 展室選單同陽光 ----------
 let roomState = { k: 0, n: 1, counts: [] }, sunTimer;
-function closePanels() { $('#room-menu').classList.add('hidden'); $('#sun-panel').classList.add('hidden'); $('#steps-panel').classList.add('hidden'); clearInterval(sunTimer); }
+function closePanels() { $('#cine-panel')?.classList.add('hidden'); $('#room-menu').classList.add('hidden'); $('#sun-panel').classList.add('hidden'); $('#steps-panel').classList.add('hidden'); clearInterval(sunTimer); }
 function updateRoomChip(k, n, counts) {
   roomState = { k, n, counts };
   const chip = $('#hud-room'); chip.classList.toggle('hidden', n < 2); chip.textContent = `🚪 展室 ${k + 1}/${n} ▾`;
@@ -230,6 +236,71 @@ function setupHudPanels() {
   $$('.sun-presets button').forEach((b) => (b.onclick = () => { S.viewer.setSunOverride(Number(b.dataset.h)); $('#sun-range').value = b.dataset.h; lab(); }));
   $('#sun-reset').onclick = () => { S.viewer.setSunOverride(null); lab(); };
   $('#three-host').addEventListener('pointerdown', closePanels);
+}
+
+// ---------- 電影院 ----------
+const CINEMA = { id: '__cinema', name: '電影院', cinema: true };
+const C = { el: null, idx: -1, art: null, list: [] };
+const fmtT = (d) => (d && isFinite(d) ? `${Math.floor(d / 60)}:${String(Math.floor(d % 60)).padStart(2, '0')}` : '0:00');
+async function enterCinema() {
+  const v = S.viewer; S.hall = CINEMA;
+  const vids = S.cur.artworks.filter((a) => a.kind === 'video').sort((a, b) => String(a.student_class).localeCompare(String(b.student_class)) || (Number(a.student_no) || 999) - (Number(b.student_no) || 999));
+  await fade(async () => {
+    await ensureFonts(vids.map((a) => (a.title || '') + (a.student_name || '')).join('') + '電影院撳下面開始播放或者片單揀影片暫時未有出口');
+    await v.loadCinema(S.cur.gallery, vids, S.reactions, media);
+    S.hallArts = vids; C.list = vids; C.idx = -1; C.art = null;
+    $('#hud-nav').classList.toggle('hidden', vids.length < 2); $('#hud-room').classList.add('hidden'); closePanels(); updateSunChip();
+    $('#cine-bar').classList.remove('hidden'); cineUi();
+  });
+  hint(vids.length ? '撳「▶」開始播放，撳「🪑」坐低睇' : '呢度暫時未有影片');
+  startPoll();
+}
+function setupCinemaUi() {
+  C.el = $('#cine-video');
+  const el = C.el;
+  el.addEventListener('timeupdate', () => { cineUi(); if (C.art && el.currentTime >= Math.min(10, (el.duration || 20) * 0.5)) markSeen(C.art); });
+  el.addEventListener('play', cineUi); el.addEventListener('pause', cineUi);
+  el.addEventListener('loadedmetadata', () => { if (S.viewer?.mode === 'cinema') S.viewer.setScreenVideo(el, el.videoWidth / el.videoHeight); cineUi(); });
+  el.addEventListener('ended', () => { if (C.idx < C.list.length - 1) cinePlay(C.idx + 1); else cineUi(); });
+  el.addEventListener('error', () => { if (C.art) toast('呢部機播唔到呢段影片（格式唔支援）', 4000); });
+  $('#cine-play').onclick = () => cineToggle();
+  $('#cine-seek').oninput = (e) => { if (el.duration) el.currentTime = (Number(e.target.value) / 1000) * el.duration; };
+  $('#cine-mute').onclick = () => { el.muted = !el.muted; cineUi(); };
+  $('#cine-sit').onclick = () => S.viewer.sit();
+  $('#cine-big').onclick = () => { if (C.idx >= 0) openModal(C.idx); else toast('先揀一套影片'); };
+  $('#cine-list').onclick = () => { const p = $('#cine-panel'); const open = p.classList.contains('hidden'); closePanels(); if (open) { renderCineList(); p.classList.remove('hidden'); } };
+}
+async function cinePlay(i, fromPoster) {
+  if (!C.list.length) return;
+  i = (i + C.list.length) % C.list.length; const a = C.list[i];
+  closePanels();
+  if (C.art?.id === a.id && C.el.src) { if (fromPoster || C.el.paused) C.el.play().catch(() => {}); return; }
+  C.idx = i; C.art = a;
+  if (a.thumb_path || a.image_path) db.mediaUrl(a.thumb_path || a.image_path).then((u) => { if (C.art?.id === a.id && C.el.readyState < 2) S.viewer?.setScreenPoster(u); });
+  C.el.src = await db.mediaUrl(a.video_path); C.el.currentTime = 0;
+  const p = C.el.play(); if (p) p.catch(() => toast('撳「▶」開始播放'));
+  cineUi();
+}
+function cineToggle() {
+  if (!C.list.length) return;
+  if (C.idx < 0) return cinePlay(0);
+  C.el.paused ? C.el.play().catch(() => {}) : C.el.pause();
+}
+function cinePause() { if (C.el && !C.el.paused) C.el.pause(); }
+function stopCinema() { if (!C.el) return; C.el.pause(); C.el.removeAttribute('src'); C.el.load(); C.idx = -1; C.art = null; }
+function cineUi() {
+  const el = C.el; if (!el) return;
+  $('#cine-play').textContent = el.paused || C.idx < 0 ? '▶' : '⏸';
+  $('#cine-mute').textContent = el.muted ? '🔇' : '🔊';
+  $('#cine-title').textContent = C.art ? `${C.art.title ? '《' + C.art.title + '》' : '（無題）'} · ${personLabel(C.art.student_class, C.art.student_no, C.art.student_name)}` : (C.list.length ? `共 ${C.list.length} 套影片` : '暫時未有影片');
+  $('#cine-time').textContent = C.art ? `${fmtT(el.currentTime)} / ${fmtT(el.duration || C.art.duration)}` : '';
+  if (document.activeElement !== $('#cine-seek')) $('#cine-seek').value = el.duration ? Math.round((el.currentTime / el.duration) * 1000) : 0;
+}
+function renderCineList() {
+  const p = $('#cine-panel');
+  p.innerHTML = `<h4 style="margin:4px 6px 8px">🎞 片單</h4>` + C.list.map((a, i) => `<button class="cine-item ${i === C.idx ? 'on' : ''}" data-i="${i}"><img alt="" data-src="${esc(a.thumb_path || a.image_path || '')}"><span><b>${esc(a.title || '（無題）')}</b><small>${esc(personLabel(a.student_class, a.student_no, a.student_name))} · ${fmtT(a.duration)}${S.seen.has(a.id) ? ' · ✅' : ''}</small></span></button>`).join('');
+  $$('img[data-src]', p).forEach((im) => db.mediaUrl(im.dataset.src).then((u) => (im.src = u)));
+  $$('.cine-item', p).forEach((b) => (b.onclick = () => cinePlay(Number(b.dataset.i), true)));
 }
 
 // ---------- 我嘅足跡 ----------
@@ -334,17 +405,26 @@ async function openModal(i) {
   const au = $('#art-audio-el'); au.pause(); au.removeAttribute('src');
   $('#art-audio').classList.toggle('hidden', !a.audio_path);
   if (a.audio_path) { db.mediaUrl(a.audio_path).then((u) => { if (S.hallArts[S.modalIdx]?.id === a.id) au.src = u; }); $('#art-audio span').textContent = `🔊 聽 ${a.student_name || '作者'} 介紹自己嘅作品`; }
-  markSeen(a);
+  if (a.kind !== 'video') markSeen(a);
   renderPraise(a);
   const idx = S.modalIdx;
+  if (a.kind === 'video') {
+    cinePause();
+    const vd = document.createElement('video'); vd.controls = true; vd.playsInline = true; vd.className = 'art-video'; vd.poster = await db.mediaUrl(a.thumb_path || a.image_path); vd.src = await db.mediaUrl(a.video_path);
+    if (C.art?.id === a.id && C.el.currentTime > 1) vd.currentTime = C.el.currentTime;
+    vd.addEventListener('timeupdate', () => { if (vd.currentTime >= Math.min(10, (vd.duration || 20) * 0.5)) markSeen(a); });
+    view.appendChild(vd); view.onclick = null; view.classList.add('is-video');
+    S.modalDispose = () => { vd.pause(); vd.removeAttribute('src'); vd.load(); };
+    return;
+  }
   if (a.kind === 'model') {
     view.classList.add('is-3d');
-    const { openModelView } = await import('./modal-viewer.js?v=20261113f');
+    const { openModelView } = await import('./modal-viewer.js?v=20261120a');
     if (S.modalIdx === idx) S.modalDispose = openModelView(view, db, a.model_path);
   } else if (a.kind === 'photos') {
     view.classList.add('is-3d');
     const urls = await Promise.all((a.photo_paths || []).map((p) => db.mediaUrl(p)));
-    const { openPhotoSpin } = await import('./modal-viewer.js?v=20261113f');
+    const { openPhotoSpin } = await import('./modal-viewer.js?v=20261120a');
     if (S.modalIdx === idx) S.modalDispose = openPhotoSpin(view, urls);
   } else {
     const img = document.createElement('img'); img.alt = ''; img.src = await db.mediaUrl(a.image_path); view.appendChild(img);

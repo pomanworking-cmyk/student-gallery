@@ -1,7 +1,7 @@
 // 老師管理頁
-import { db, resizeImage } from './data.js?v=20261113f';
-import { THEMES, themeColors, stickerUrl, GRADES, gradeLabel } from './constants.js?v=20261113f';
-import { $, $$, esc, toast, confirmBox, show, personLabel, hourLabel } from './ui.js?v=20261113f';
+import { db, resizeImage } from './data.js?v=20261120a';
+import { THEMES, themeColors, stickerUrl, GRADES, gradeLabel } from './constants.js?v=20261120a';
+import { $, $$, esc, toast, confirmBox, show, personLabel, hourLabel } from './ui.js?v=20261120a';
 
 const A = { tab: 'galleries', view: 'list', gallery: null, hallId: null, roster: [], teacher: null };
 let root;
@@ -169,7 +169,7 @@ function parseFilename(fn) {
   if (m) return { no: Number(m[1]), name: (m[2] || '').trim() };
   return {};
 }
-const KIND_LABEL = { flat: '平面', photos: '360° 相片', model: '3D 作品' };
+const KIND_LABEL = { flat: '平面', photos: '360° 相片', model: '3D 作品', video: '🎬 影片' };
 
 async function renderArts(body) {
   const full = await db.getGalleryFull(A.gallery.id);
@@ -187,6 +187,7 @@ async function renderArts(body) {
         <button data-k="flat">🖼️ 平面作品<small>一次揀好多張，每張就係一件作品</small></button>
         <button data-k="photos">🔄 立體：多角度相片<small>一件作品揀 3 至 12 張唔同角度嘅相</small></button>
         <button data-k="model">🧊 立體：3D 掃描檔<small>由 Scaniverse 等 app 匯出嘅 .glb 檔</small></button>
+        <button data-k="video">🎬 影片<small>喺大堂嘅電影院播放，每段最多 50MB</small></button>
       </div>
       <p class="muted" id="kind-tip" style="font-size:14px;margin-top:0"></p>
       <div class="row" style="margin-bottom:12px"><label class="field" style="max-width:200px">呢批作品嘅班別<input id="batch-cls" value="${esc(defCls)}" placeholder="例如 4A"></label></div>
@@ -226,7 +227,8 @@ async function renderArts(body) {
     A.kind = k;
     $$('.kind-seg button', body).forEach((b) => b.classList.toggle('on', b.dataset.k === k));
     const f = $('#files');
-    if (k === 'model') { f.accept = '.glb,model/gltf-binary'; f.multiple = true; $('#drop-txt').textContent = '🧊 撳呢度揀 .glb 檔（可以一次揀幾個）'; $('#kind-tip').innerHTML = '用 Scaniverse 掃描，然後揀「Export → GLB」匯出。每個檔最好細過 40MB，匯出時揀較低嘅材質解像度（例如 2K）就會細好多。系統會自動幫你影一張封面相。'; }
+    if (k === 'video') { f.accept = 'video/mp4,video/webm,video/quicktime,video/*'; f.multiple = true; $('#drop-txt').textContent = '🎬 撳呢度揀影片（可以一次揀幾段）'; $('#kind-tip').innerHTML = '影片會喺畫廊大堂嘅「🎬 電影院」播放。建議 <b>MP4、720p、3 分鐘以內</b>，每段最多 50MB。<br>⚠️ iPhone 預設錄影格式（HEVC）喺部分 Windows／Android 電腦播唔到：可以喺 iPhone「設定 → 相機 → 格式」揀「<b>最兼容</b>」再錄。系統會自動截一張封面。'; }
+    else if (k === 'model') { f.accept = '.glb,model/gltf-binary'; f.multiple = true; $('#drop-txt').textContent = '🧊 撳呢度揀 .glb 檔（可以一次揀幾個）'; $('#kind-tip').innerHTML = '用 Scaniverse 掃描，然後揀「Export → GLB」匯出。每個檔最好細過 40MB，匯出時揀較低嘅材質解像度（例如 2K）就會細好多。系統會自動幫你影一張封面相。'; }
     else if (k === 'photos') { f.accept = 'image/*'; f.multiple = true; $('#drop-txt').textContent = '🔄 撳呢度揀「同一件作品」嘅多角度相（3 至 12 張）'; $('#kind-tip').innerHTML = '圍住作品每隔一段距離影一張，例如每 45° 影一張，一共 8 張。最好用同一個背景同高度，咁樣轉起上嚟最順。'; }
     else { f.accept = 'image/*'; f.multiple = true; $('#drop-txt').textContent = '📷 撳呢度揀相（或者拖相入嚟）'; $('#kind-tip').innerHTML = '小貼士：將檔案名改做「學號 姓名」（例如 <b>12 陳小明.jpg</b>），系統會自動幫你填好。只寫學號都得，系統會喺學生名單搵返個名。'; }
   };
@@ -257,8 +259,20 @@ async function renderArts(body) {
       const it = { ...baseItem(imgs[0]), kind: 'photos', files: imgs }; pending.push(it); const c = addCard(it, true);
       $('.thumb', c).style.backgroundImage = `url("${URL.createObjectURL(imgs[0])}")`;
       $('.strip', c).innerHTML = imgs.map((f) => `<img src="${URL.createObjectURL(f)}" alt="">`).join('');
+    } else if (A.kind === 'video') {
+      for (const f of files) {
+        if (!f.type.startsWith('video/') && !/\.(mp4|webm|mov|m4v)$/i.test(f.name)) { toast(`「${f.name}」唔係影片檔`); continue; }
+        if (f.size > 50 * 1024 * 1024) { toast(`「${f.name}」太大（${(f.size / 1048576).toFixed(0)}MB），最多 50MB。可以剪短或者用較低解像度匯出`); continue; }
+        const it = { ...baseItem(f), kind: 'video', files: [f], cover: null }; pending.push(it); const c = addCard(it);
+        const st = $('.status', c); st.textContent = '檢查緊影片…';
+        try {
+          const info = await probeVideo(f); it.duration = info.duration; it.cover = info.cover;
+          $('.thumb', c).style.backgroundImage = `url("${URL.createObjectURL(info.cover)}")`;
+          st.textContent = `未上傳 · ${fmtDur(info.duration)} · ${(f.size / 1048576).toFixed(1)}MB`;
+        } catch (e) { st.textContent = '呢部機播唔到呢個影片格式（可能係 HEVC），請轉做 MP4 (H.264) 再上載'; st.className = 'status err'; it.bad = true; }
+      }
     } else {
-      const { snapshotGLBFile } = await import('./modal-viewer.js?v=20261113f');
+      const { snapshotGLBFile } = await import('./modal-viewer.js?v=20261120a');
       for (const f of files) {
         if (!/\.glb$/i.test(f.name)) { toast(`「${f.name}」唔係 .glb 檔`); continue; }
         if (f.size > 48 * 1024 * 1024) { toast(`「${f.name}」太大（${(f.size / 1048576).toFixed(0)}MB），請匯出細啲嘅版本`); continue; }
@@ -276,8 +290,8 @@ async function renderArts(body) {
   $('#upload-all').onclick = async () => {
     const missing = pending.find((it) => !it.student_name);
     if (missing) { toast('有作品未填姓名'); $('[data-k=student_name]', missing.card).focus(); return; }
-    if (pending.some((it) => it.bad)) return toast('有 3D 檔讀唔到，請先移除');
-    const bytes = pending.reduce((t, it) => t + it.files.reduce((u, f) => u + (it.kind === 'model' ? f.size : Math.min(f.size, 600 * 1024)), 0), 0);
+    if (pending.some((it) => it.bad)) return toast('有檔案讀唔到，請先移除');
+    const bytes = pending.reduce((t, it) => t + it.files.reduce((u, f) => u + (it.kind === 'model' || it.kind === 'video' ? f.size : Math.min(f.size, 600 * 1024)), 0), 0);
     const warn = await checkSpaceBeforeUpload(bytes);
     if (warn && !(await confirmBox(warn + ' 仍然上載？', '上載'))) return;
     $('#upload-all').disabled = true;
@@ -285,7 +299,7 @@ async function renderArts(body) {
     for (const [i, it] of [...pending].entries()) {
       const st = $('.status', it.card); st.textContent = '上傳中…'; st.className = 'status';
       try {
-        await db.addArtwork({ kind: it.kind, files: it.files, cover: it.cover }, { hall_id: hall.id, student_class: it.student_class, student_no: it.student_no ? Number(it.student_no) : null, student_name: it.student_name, title: it.title, sort: arts.length + i });
+        await db.addArtwork({ kind: it.kind, files: it.files, cover: it.cover }, { hall_id: hall.id, student_class: it.student_class, student_no: it.student_no ? Number(it.student_no) : null, student_name: it.student_name, title: it.title, sort: arts.length + i, ...(it.kind === 'video' ? { duration: it.duration || null } : {}) });
         st.textContent = '完成'; st.className = 'status ok'; ok++;
       } catch (e) { st.textContent = '失敗：' + e.message; st.className = 'status err'; }
     }
@@ -447,7 +461,7 @@ async function renderTools(body) {
       const gById = Object.fromEntries(d.galleries.map((g) => [g.id, g])); const hById = Object.fromEntries(d.halls.map((h) => [h.id, h])); const aById = Object.fromEntries(d.artworks.map((a) => [a.id, a]));
       const url = async (p) => (p && !p.startsWith('gen') && !p.startsWith('idb:') ? await db.mediaUrl(p) : '');
       const arts = []; for (const a of d.artworks) { const h = hById[a.hall_id] || {}; const g = gById[h.gallery_id] || {};
-        arts.push({ 畫廊: `${g.edition || ''} ${g.title || ''}`.trim(), 通道: h.name || '', 班別: a.student_class || '', 學號: a.student_no ?? '', 姓名: a.student_name || '', 作品題目: a.title || '', 種類: KIND_NAME[a.kind || 'flat'], 讚數: d.reactions.filter((r) => r.artwork_id === a.id).length, 相片連結: await url(a.image_path), '3D 檔連結': await url(a.model_path), 上載時間: fmtTime(a.created_at) }); }
+        arts.push({ 畫廊: `${g.edition || ''} ${g.title || ''}`.trim(), 通道: h.name || '', 班別: a.student_class || '', 學號: a.student_no ?? '', 姓名: a.student_name || '', 作品題目: a.title || '', 種類: KIND_NAME[a.kind || 'flat'], 讚數: d.reactions.filter((r) => r.artwork_id === a.id).length, 相片連結: await url(a.image_path), '3D 檔連結': await url(a.model_path), 影片連結: await url(a.video_path), 上載時間: fmtTime(a.created_at) }); }
       const reacts = d.reactions.map((r) => { const a = aById[r.artwork_id] || {}; const g = gById[(hById[a.hall_id] || {}).gallery_id] || {};
         return { 畫廊: g.title || '', 作品: a.title || '', 作者: personLabel(a.student_class, a.student_no, a.student_name), 讚賞者: personLabel(r.from_class, r.from_class === '老師' ? '' : r.from_no, r.from_name), 貼紙: STICKER_NAME[r.sticker] || r.sticker, 讚美詞: r.phrase, 時間: fmtTime(r.created_at) }; }).sort((x, y) => y.時間.localeCompare(x.時間));
       const gals = d.galleries.map((g) => ({ 作品名稱: g.title, 第幾屆: g.edition || '', 副題: g.subtitle || '', 年級: gradeLabel(g.grade), 風格: THEMES[g.theme]?.name || '', 通道: d.halls.filter((h) => h.gallery_id === g.id).map((h) => h.name).join('、'), 作品數: d.artworks.filter((a) => (hById[a.hall_id] || {}).gallery_id === g.id).length }));
@@ -563,4 +577,24 @@ async function renderVisits(body) {
   } catch (e) {
     vb.innerHTML = e.message === 'NEED_UPDATE_4' ? '<div class="notice" style="margin:0">要先更新資料庫：喺 Supabase 嘅 SQL Editor 執行 <code>supabase/update-4.sql</code>（GitHub repo 入面有）。</div>' : `<p class="status err">${esc(e.message)}</p>`;
   }
+}
+
+// ---------- 影片：檢查格式、片長、截封面 ----------
+export const fmtDur = (d) => (d && isFinite(d) ? `${Math.floor(d / 60)}:${String(Math.round(d % 60)).padStart(2, '0')}` : '');
+function probeVideo(file) {
+  return new Promise((ok, bad) => {
+    const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.preload = 'auto';
+    const url = URL.createObjectURL(file); let done = false;
+    const fail = () => { if (done) return; done = true; URL.revokeObjectURL(url); bad(new Error('cannot decode')); };
+    const t = setTimeout(fail, 15000);
+    v.onerror = fail;
+    v.onloadedmetadata = () => { if (!v.videoWidth) return fail(); v.currentTime = Math.min(1.5, (v.duration || 3) / 3); };
+    v.onseeked = () => {
+      if (done) return;
+      const k = Math.min(1, 1280 / v.videoWidth); const c = document.createElement('canvas'); c.width = Math.round(v.videoWidth * k); c.height = Math.round(v.videoHeight * k);
+      c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+      c.toBlob((b) => { done = true; clearTimeout(t); URL.revokeObjectURL(url); b ? ok({ duration: v.duration, cover: new File([b], 'cover.jpg', { type: 'image/jpeg' }) }) : bad(new Error('no frame')); }, 'image/jpeg', 0.85);
+    };
+    v.src = url;
+  });
 }

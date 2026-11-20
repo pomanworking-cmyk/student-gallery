@@ -1,6 +1,6 @@
 // 資料層：有 Supabase 設定就用雲端，冇就用試用模式（只存喺呢部機）
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=20261113f';
-import { drawSampleArt } from './sample-art.js?v=20261113f';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js?v=20261120a';
+import { drawSampleArt } from './sample-art.js?v=20261120a';
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Math.random().toString(36).slice(2) + Date.now().toString(36));
 const now = () => new Date().toISOString();
@@ -27,7 +27,7 @@ export async function resizeImage(file, max = 2000) {
 }
 
 // ================= 試用模式 =================
-const LS_KEY = 'student-gallery-demo-v3';
+const LS_KEY = 'student-gallery-demo-v4';
 let memStore = null;
 const memImages = new Map();
 function idb() {
@@ -68,6 +68,11 @@ function seed() {
   const clay = [['4A', 8, 'model', 2, '小怪獸樂團'], ['4B', 2, 'photos', 1, '花之塔'], ['4B', 5, 'model', 1, '彩色花瓶'], ['4A', 3, 'photos', 0, '開心怪獸'], ['4A', 6, 'flat', 0, '設計草圖']];
   clay.forEach(([cls, no, kind, s, t], i) => artworks.push({ id: 'demo-clay-' + i, hall_id: 'demo-4all', kind, student_class: cls, student_no: no, student_name: nameOf(cls, no), title: t,
     image_path: kind === 'flat' ? 'gen:' + (i + 3) : `genview:${s}:0`, photo_paths: kind === 'photos' ? [0, 1, 2, 3, 4, 5].map((v) => `genview:${s}:${v}`) : [], model_path: kind === 'model' ? 'genmodel:' + s : null, sort: i, created_at: now() }));
+  // 示範影片（電影院）
+  const canMp4 = typeof document !== 'undefined' && document.createElement('video').canPlayType('video/mp4; codecs="avc1.42E01E"');
+  const vext = canMp4 ? 'mp4' : 'webm';
+  artworks.push({ id: 'demo-vid-0', hall_id: 'demo-4a', kind: 'video', student_class: '4A', student_no: 2, student_name: nameOf('4A', 2), title: '我的動畫：生命遊戲', image_path: 'asset:demo-media/poster1.jpg', thumb_path: 'asset:demo-media/poster1.jpg', video_path: `asset:demo-media/clip1.${vext}`, duration: 8, photo_paths: [], model_path: null, sort: 50, created_at: now() });
+  artworks.push({ id: 'demo-vid-1', hall_id: 'demo-4b', kind: 'video', student_class: '4B', student_no: 4, student_name: nameOf('4B', 4), title: '奇妙的旋渦', image_path: 'asset:demo-media/poster2.jpg', thumb_path: 'asset:demo-media/poster2.jpg', video_path: `asset:demo-media/clip2.${vext}`, duration: 8, photo_paths: [], model_path: null, sort: 50, created_at: now() });
   const reactions = [
     { id: uid(), artwork_id: 'demo-art-0', sticker: 'love', phrase: '我好鍾意你用嘅顏色！', from_class: '4B', from_no: '2', from_name: nameOf('4B', 2), created_at: now() },
     { id: uid(), artwork_id: 'demo-art-0', sticker: 'idea', phrase: '好有想像力！', from_class: '4A', from_no: '3', from_name: nameOf('4A', 3), created_at: now() },
@@ -137,12 +142,13 @@ class DemoBackend {
     const row = { ...meta, kind, id: uid(), photo_paths: [], model_path: null, created_at: now() };
     if (kind === 'flat') { row.image_path = await this._store(await resizeImage(files[0])); row.thumb_path = await this._store(await resizeImage(files[0], 800)); }
     else if (kind === 'photos') { for (const f of files) row.photo_paths.push(await this._store(await resizeImage(f, 1600))); row.image_path = row.photo_paths[0]; }
+    else if (kind === 'video') { row.video_path = await this._store(files[0]); if (cover) { row.image_path = await this._store(cover); row.thumb_path = row.image_path; } }
     else { row.model_path = await this._store(files[0]); row.image_path = cover ? await this._store(await resizeImage(cover, 1200)) : null; }
     this.s.artworks.push(row); this._save(); return row;
   }
   async updateArtwork(a) { const i = this.s.artworks.findIndex((x) => x.id === a.id); this.s.artworks[i] = { ...this.s.artworks[i], ...a }; this._save(); }
   async deleteArtwork(a) {
-    for (const p of [a.image_path, a.thumb_path, a.model_path, a.audio_path, ...(a.photo_paths || [])]) if (p?.startsWith('idb:')) await idbDel(p.slice(4));
+    for (const p of new Set([a.image_path, a.thumb_path, a.model_path, a.audio_path, a.video_path, ...(a.photo_paths || [])])) if (p?.startsWith('idb:')) await idbDel(p.slice(4));
     this.s.visits = this.V.filter((v) => v.artwork_id !== a.id);
     this.s.artworks = this.s.artworks.filter((x) => x.id !== a.id); this.s.reactions = this.s.reactions.filter((r) => r.artwork_id !== a.id); this._save();
   }
@@ -167,7 +173,7 @@ class DemoBackend {
   }
   async storageUsage() {
     let total = 0, files = 0;
-    for (const a of this.s.artworks) for (const p of [a.image_path, a.thumb_path, a.model_path, a.audio_path, ...(a.photo_paths || [])]) if (p?.startsWith('idb:')) { const b = await idbGet(p.slice(4)); if (b) { total += b.size; files++; } }
+    for (const a of this.s.artworks) for (const p of new Set([a.image_path, a.thumb_path, a.model_path, a.audio_path, a.video_path, ...(a.photo_paths || [])])) if (p?.startsWith('idb:')) { const b = await idbGet(p.slice(4)); if (b) { total += b.size; files++; } }
     return { total_bytes: total, my_bytes: total, files };
   }
   async backupData() { return { galleries: this.s.galleries, halls: this.s.halls, artworks: this.s.artworks, reactions: this.s.reactions, students: this.s.students, visits: this.V }; }
@@ -179,13 +185,14 @@ class DemoBackend {
     if (this._cache.has(p)) return this._cache.get(p);
     let url = '';
     if (p.startsWith('gen:')) url = drawSampleArt(Number(p.slice(4)));
-    else if (p.startsWith('genview:')) { const [, s, i] = p.split(':'); const { renderSampleViews } = await import('./sample-model.js?v=20261113f'); const views = renderSampleViews(Number(s)); views.forEach((v, j) => this._cache.set(`genview:${s}:${j}`, v)); url = views[Number(i)]; }
+    else if (p.startsWith('genview:')) { const [, s, i] = p.split(':'); const { renderSampleViews } = await import('./sample-model.js?v=20261120a'); const views = renderSampleViews(Number(s)); views.forEach((v, j) => this._cache.set(`genview:${s}:${j}`, v)); url = views[Number(i)]; }
     else if (p.startsWith('idb:')) { const b = await idbGet(p.slice(4)); url = b ? URL.createObjectURL(b) : drawSampleArt(1); }
+    else if (p.startsWith('asset:')) url = p.slice(6);
     else url = p;
     this._cache.set(p, url); return url;
   }
   async loadModel(p) {
-    if (p.startsWith('genmodel:')) { const { buildSampleModel } = await import('./sample-model.js?v=20261113f'); return { object: buildSampleModel(Number(p.slice(9))) }; }
+    if (p.startsWith('genmodel:')) { const { buildSampleModel } = await import('./sample-model.js?v=20261120a'); return { object: buildSampleModel(Number(p.slice(9))) }; }
     const b = await idbGet(p.slice(4)); if (!b) throw new Error('搵唔到模型檔'); return { buffer: await b.arrayBuffer() };
   }
 }
@@ -266,7 +273,7 @@ class CloudBackend {
     if (res.error && isMissingColumn(res.error)) throw new Error('資料庫要先更新：請喺 Supabase 嘅 SQL Editor 執行 supabase/update-2.sql，然後再儲存');
     return this._chk(res);
   }
-  async _removePaths(arts) { const ps = arts.flatMap((a) => [a.image_path, a.thumb_path, a.model_path, a.audio_path, ...(a.photo_paths || [])]).filter(Boolean); for (let i = 0; i < ps.length; i += 100) await this.sb.storage.from('artworks').remove(ps.slice(i, i + 100)); }
+  async _removePaths(arts) { const ps = [...new Set(arts.flatMap((a) => [a.image_path, a.thumb_path, a.model_path, a.audio_path, a.video_path, ...(a.photo_paths || [])]).filter(Boolean))]; for (let i = 0; i < ps.length; i += 100) await this.sb.storage.from('artworks').remove(ps.slice(i, i + 100)); }
   async deleteGallery(id) { const f = await this.getGalleryFull(id); await this._removePaths(f?.artworks || []); this._chk(await this.sb.from('galleries').delete().eq('id', id)); }
   async saveHall(h) { return this._chk(await this.sb.from('halls').upsert(h).select().single()); }
   async deleteHall(id) { await this._removePaths(this._chk(await this.sb.from('artworks').select('*').eq('hall_id', id))); this._chk(await this.sb.from('halls').delete().eq('id', id)); }
@@ -279,6 +286,14 @@ class CloudBackend {
     const row = { ...meta, kind, photo_paths: [], model_path: null };
     if (kind === 'flat') { row.image_path = await this._upload(await resizeImage(files[0]), meta.hall_id, 'jpg', 'image/jpeg'); row.thumb_path = await this._upload(await resizeImage(files[0], 800), meta.hall_id, 'jpg', 'image/jpeg'); }
     else if (kind === 'photos') { for (const f of files) row.photo_paths.push(await this._upload(await resizeImage(f, 1600), meta.hall_id, 'jpg', 'image/jpeg')); row.image_path = row.photo_paths[0]; }
+    else if (kind === 'video') {
+      const f = files[0]; const ext = (f.name.split('.').pop() || 'mp4').toLowerCase().replace(/[^a-z0-9]/g, '') || 'mp4';
+      row.video_path = await this._upload(f, meta.hall_id, ext, f.type || 'video/mp4');
+      if (cover) { row.image_path = await this._upload(cover, meta.hall_id, 'jpg', 'image/jpeg'); row.thumb_path = row.image_path; }
+      const res = await this.sb.from('artworks').insert(row).select().single();
+      if (res.error) { await this._removePaths([row]); if (/kind_check|video_path|duration/.test(res.error.message || '') || isMissingColumn(res.error)) throw new Error('資料庫要先更新：請喺 Supabase 嘅 SQL Editor 執行 supabase/update-5.sql'); throw res.error; }
+      return res.data;
+    }
     else { row.model_path = await this._upload(files[0], meta.hall_id, 'glb', 'model/gltf-binary'); row.image_path = cover ? await this._upload(await resizeImage(cover, 1200), meta.hall_id, 'jpg', 'image/jpeg') : null; }
     let res = await this.sb.from('artworks').insert(row).select().single();
     if (res.error && isMissingColumn(res.error) && row.thumb_path) { // 資料庫未更新：唔用預覽圖都照樣上載
